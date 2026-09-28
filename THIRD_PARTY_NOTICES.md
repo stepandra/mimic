@@ -34,5 +34,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Mist
+
+Mist 6.0.3 is vendored under `vendor/mist` with its original
+[Apache-2.0 license](vendor/mist/LICENSE). Its HTTP parser has a narrowly
+scoped security-boundary patch; the archive checksums, original source
+provenance and exact changes are documented in
+[docs/MIST_VENDOR.md](docs/MIST_VENDOR.md).
+
 Other dependencies are declared in `gleam.toml` and pinned in `manifest.toml`;
 their own license notices accompany their distributions.
