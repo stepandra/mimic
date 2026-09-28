@@ -1,0 +1,6 @@
+/build/
+/.tools/
+/.mimic/
+/target/
+*.beam
+.DS_Store

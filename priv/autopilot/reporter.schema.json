@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["transition"],
+  "properties": {
+    "transition": {"type": "string", "enum": ["NO_COMMENTARY", "REVIEW_REQUESTED"]}
+  }
+}

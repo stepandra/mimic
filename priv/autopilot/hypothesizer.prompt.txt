@@ -1,0 +1,1 @@
+Propose one minimal unified diff of persona.toml, never whole-file replacement. You cannot apply changes, override lint, oracle, canary, or promotion.

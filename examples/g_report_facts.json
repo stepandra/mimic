@@ -1,0 +1,12 @@
+{
+  "_fixture": "synthetic; illustrative engine-shaped facts, not a passed gate",
+  "run_id": "synthetic-pb-1",
+  "class": "MINOR",
+  "oracle_accepted": 8,
+  "oracle_total": 10,
+  "canary_deviations": 1,
+  "lint_passed": true,
+  "oracle_passed": false,
+  "canary_passed": false,
+  "human_approved": false
+}

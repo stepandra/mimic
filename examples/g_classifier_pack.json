@@ -1,0 +1,9 @@
+{
+  "_fixture": "synthetic; no upstream capture or measured profile",
+  "artifacts": [
+    {
+      "id": "synthetic-drift-1",
+      "text": "Only the user-agent version string changed in this synthetic drift."
+    }
+  ]
+}

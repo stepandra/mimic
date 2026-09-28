@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hypothesis", "next_action", "patch"],
+  "properties": {
+    "hypothesis": {
+      "type": "string",
+      "enum": ["NETWORK", "CODE", "DATA", "ENVIRONMENT"]
+    },
+    "next_action": {
+      "type": "string",
+      "enum": ["RETRY_NETWORK", "RECHECK_DATA", "REPAIR_PERSONA", "ASK_HUMAN"]
+    },
+    "patch": {"type": "string"}
+  }
+}

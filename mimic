@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PATH="$ROOT/.tools:$ROOT/.tools/bin:$PATH"
+export PATH
+if ! command -v gleam >/dev/null 2>&1; then
+  printf '%s\n' 'mimic: Gleam >= 1.18 is required; see README.md' >&2
+  exit 127
+fi
+cd "$ROOT"
+exec gleam run -- "$@"

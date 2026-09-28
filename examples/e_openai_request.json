@@ -1,0 +1,24 @@
+{
+  "_fixture": "synthetic — not a provider capture",
+  "_note": "Remove _fixture and _note before submitting this illustrative body to a provider",
+  "model": "synthetic-model",
+  "messages": [
+    {"role": "user", "content": "Look up the synthetic value"},
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "synthetic-call-1",
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "arguments": "{\"key\":\"synthetic\"}"
+          }
+        }
+      ]
+    },
+    {"role": "tool", "tool_call_id": "synthetic-call-1", "content": "value"}
+  ],
+  "max_completion_tokens": 64
+}

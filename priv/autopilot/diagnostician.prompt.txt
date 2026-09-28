@@ -1,0 +1,1 @@
+Choose a bounded next action for a failed run. Do not claim a gate passed. If unsure choose ASK_HUMAN. Optional patch is a single-file persona diff.

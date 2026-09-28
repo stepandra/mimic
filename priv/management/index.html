@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIMIC control plane</title>
+  <link rel="stylesheet" href="/panel.css">
+  <script defer src="/panel.js"></script>
+</head>
+<body>
+  <header><h1>MIMIC control plane</h1><p>Local operator console · gated persona activation</p></header>
+  <main>
+    <section aria-labelledby="connect-title">
+      <h2 id="connect-title">Connect</h2>
+      <label for="management-key">Management key</label>
+      <input id="management-key" type="password" autocomplete="off" placeholder="MIMIC_MANAGEMENT_KEY">
+      <button id="connect" type="button">Load status</button>
+      <p id="status" role="status" aria-live="polite">Enter the environment-provided key. It remains in this tab’s memory only.</p>
+    </section>
+    <section aria-labelledby="persona-title">
+      <h2 id="persona-title">Personas</h2>
+      <form id="active-form"><label for="provider">Provider</label><input id="provider" required pattern="[A-Za-z0-9_-]{1,64}" value="anthropic"><button>Read active pointer</button></form>
+      <pre id="active"></pre>
+      <form id="draft-form"><label for="draft-provider">Draft provider</label><input id="draft-provider" required pattern="[A-Za-z0-9_-]{1,64}" value="anthropic"><label for="draft-content">Persona TOML</label><textarea id="draft-content" required rows="9" maxlength="60000"></textarea><button>Validate and store draft</button></form>
+      <p>Drafts do not become active. Promotion requires a gate-approved Workshop run and operator signature.</p>
+      <form id="promote-form"><label for="run-id">Approved run ID</label><input id="run-id" required pattern="[A-Za-z0-9_-]{1,64}"><label for="signature">Promotion signature</label><input id="signature" type="password" required autocomplete="off"><button>Promote approved run</button></form>
+    </section>
+    <section aria-labelledby="credentials-title">
+      <h2 id="credentials-title">Credentials</h2><button id="reload-credentials" type="button">Refresh metadata</button><pre id="credentials"></pre>
+      <form id="credential-form"><label for="credential-id">Credential ID</label><input id="credential-id" required pattern="[A-Za-z0-9_-]{1,64}"><label for="access-token">Access token</label><input id="access-token" type="password" required autocomplete="off"><label for="refresh-token">Refresh token</label><input id="refresh-token" type="password" required autocomplete="off"><label for="expires">Expiry (Unix milliseconds)</label><input id="expires" type="number" min="1" required><button>Add credential</button></form>
+      <form id="delete-credential-form"><label for="delete-credential">Credential ID to delete</label><input id="delete-credential" required pattern="[A-Za-z0-9_-]{1,64}"><button>Delete credential</button></form>
+    </section>
+    <section aria-labelledby="keys-title">
+      <h2 id="keys-title">Ingress keys</h2><button id="reload-keys" type="button">Refresh metadata</button><pre id="keys"></pre>
+      <form id="key-form"><label for="key-id">Key ID</label><input id="key-id" required pattern="[A-Za-z0-9_-]{1,64}"><label for="key-token">Key value (at least 32 bytes)</label><input id="key-token" type="password" required minlength="32" autocomplete="off"><button>Add key</button></form>
+      <form id="delete-key-form"><label for="delete-key">Key ID to revoke</label><input id="delete-key" required pattern="[A-Za-z0-9_-]{1,64}"><button>Revoke key</button></form>
+    </section>
+    <section aria-labelledby="views-title"><h2 id="views-title">Operations</h2><button id="reload-views" type="button">Refresh quota and drift</button><h3>Quota</h3><pre id="quotas"></pre><h3>Drift</h3><pre id="drift"></pre></section>
+  </main>
+</body>
+</html>

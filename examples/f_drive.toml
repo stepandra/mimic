@@ -1,0 +1,9 @@
+# Synthetic example: no real CLI or recorder is invoked by this file.
+# Replace digest with a verified, operator-owned image before running.
+image = "example.invalid/cli@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+executable = "/usr/bin/cli"
+seed = 42
+args = ["--prompt", "Reply with one word", "--max-tokens", "8"]
+expected_request_kinds = ["chat"]
+# For capture, explicitly configure both recorder_proxy and recorder_container.
+# No recorder means --network=none; no network capture is possible.

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["patch", "rationale", "risk_notes"],
+  "properties": {
+    "patch": {"type": "string"},
+    "rationale": {"type": "string"},
+    "risk_notes": {"type": "string"}
+  }
+}
