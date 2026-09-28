@@ -1,0 +1,8 @@
+{
+  "schema_version":1,"id":"devin-auth-pkce-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,"driver_kind":"scenario",
+  "required_checks":["pkce_s256_state_binding","json_code_verifier_exchange","session_token_prefix","permanent_token_not_rotating_oauth","persisted_token_no_reseed","real_ingress_uses_enrolled_token"],
+  "acquisition_mode":"pkce","token_lifetime":"permanent",
+  "authorization_path":"/auth/cli/continue","token_path":"/auth/cli/token","token_response":{"token":"synthetic-devin-pkce"},
+  "steps":["synthetic_loopback_callback","reject_wrong_state","exchange_json_code_and_verifier","persist_session_token","invoke_chat_route","restart_without_reseeding","invoke_chat_route"],
+  "privacy":"All endpoint origins loopback; all credential bytes synthetic. No real browser login or operator credential directories."
+}

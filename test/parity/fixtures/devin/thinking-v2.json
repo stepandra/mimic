@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"devin-thinking-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["thinking_model_uid_resolution","thinking_not_visible_text","signature_bytes_and_type_preserved","signature_turn_replay","source_applicability_reviewed"],
+  "path":"/v1/messages","model":"devin/swe-2-high","thinking":"synthetic reasoning","signature_base64":"AAECA/8=",
+  "note":"Signature bytes are arbitrary synthetic fixture bytes, never asserted to be native-valid cryptographic signatures."
+}

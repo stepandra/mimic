@@ -42,6 +42,22 @@ pub fn cooldown_until(ledger: Ledger, id: String) -> Int {
   }
 }
 
+/// Adapter-confirmed relative cooldowns are converted to absolute wall time by
+/// the runtime before persistence. Never shorten an existing cooldown.
+pub fn cool_down(ledger: Ledger, id: String, until_ms: Int) -> Ledger {
+  let previous = case lookup(ledger, id) {
+    Some(entry) -> entry
+    None -> Entry(id, [], 0)
+  }
+  Ledger([
+    Entry(
+      ..previous,
+      cooldown_until_ms: max(previous.cooldown_until_ms, until_ms),
+    ),
+    ..list.filter(ledger.entries, fn(entry) { entry.credential_id != id })
+  ])
+}
+
 /// Unknown headers leave previous windows untouched. Rejected windows and
 /// 429/529 responses initiate cooldown. Reset is a Unix seconds or milliseconds
 /// timestamp; malformed values are never guessed from the wall clock.

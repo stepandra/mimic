@@ -1,0 +1,400 @@
+{
+  "schema_version": 1,
+  "handoff_version": 2,
+  "scope_id": "cpa-provider-parity-v2-devin",
+  "previous_v1_manifest_sha256": "5c26b8a2a844c2914edd807bdeb8a9df85d7347b519225844ed9ab0e31650ac7",
+  "mimic_base_revision": "c3ca7e805b8e4c3f8271468fbbe46271a5b0e8f4",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "source_file_count": 51,
+  "delta_file_count": 18,
+  "files": [
+    {
+      "path": "docs/parity/BASELINE.md",
+      "sha256": "b43dbb5217b1f509568ea447055f0d942f56a3f245b43e214d4a839bdaea041f",
+      "bytes": 6919
+    },
+    {
+      "path": "docs/parity/CONTRACT.md",
+      "sha256": "d50e650bf43d983ec1de131c18044da3c4f09c345e00c08f0fea5b224baed612",
+      "bytes": 8798
+    },
+    {
+      "path": "docs/parity/README.md",
+      "sha256": "2c294537ec972c0c1769eb947d4ee6f7dba272f0a14ad65fb2676c804a27ea4e",
+      "bytes": 7182
+    },
+    {
+      "path": "docs/parity/v2/README.md",
+      "sha256": "703190dcb16dc417f91d6c7b48f7673862e8acb90d2ef04e95d89baa901a726d",
+      "bytes": 11008
+    },
+    {
+      "path": "scripts/parity/.gitignore",
+      "sha256": "32dae3052f331ee34d628ef535709b301259a45df7c7522c4d35dcf49873f00b",
+      "bytes": 13
+    },
+    {
+      "path": "scripts/parity/baseline-drivers.json",
+      "sha256": "2792341536ac07274772c23250f4f7c6ebee365d5340e399687b3631e3a2963e",
+      "bytes": 230
+    },
+    {
+      "path": "scripts/parity/local_driver.py",
+      "sha256": "a20b06f0ac497d4a13769129f4b73c9f8c08acfe0ad88a24ad33c47d972536d5",
+      "bytes": 8346
+    },
+    {
+      "path": "scripts/parity/test_local_driver.py",
+      "sha256": "f600074fa552a20e4077e7e114fba2f4d4b1af4d0535add2bbc2815c92e7992c",
+      "bytes": 4595
+    },
+    {
+      "path": "test/parity/fixtures/backend-v1.json",
+      "sha256": "9cc3a223ec54344afdc11af14f4ca9e72c737301d56b79014302f10af213aa56",
+      "bytes": 514
+    },
+    {
+      "path": "test/parity/fixtures/chat-v1.json",
+      "sha256": "e151280f635059513211d2ba7e5563eeaac4e197e2279fe0d2e43c5f55660c7a",
+      "bytes": 686
+    },
+    {
+      "path": "test/parity/fixtures/codex-alias-v1.json",
+      "sha256": "a087b0b8695eeeac4ed4b4e54b22025676ca0dac82adad86fbac1166a9b88204",
+      "bytes": 511
+    },
+    {
+      "path": "test/parity/fixtures/compact-v1.json",
+      "sha256": "8fcdec1035ef72770d69b846d3c1a370f9c30e3dcc8b8aead307ce94dbd34530",
+      "bytes": 557
+    },
+    {
+      "path": "test/parity/fixtures/count-v1.json",
+      "sha256": "98620dd3768675701b12370a8ce0780833d92929ec8c76db2a3d0a64b3bcbf41",
+      "bytes": 456
+    },
+    {
+      "path": "test/parity/fixtures/devin/auth-import-v2.json",
+      "sha256": "30a180bed8573d7ad5abb9882efc55110f453e5ec8ce4068c16ce3a187a600ae",
+      "bytes": 741
+    },
+    {
+      "path": "test/parity/fixtures/devin/auth-pkce-v2.json",
+      "sha256": "e1d0c3de2974efb89a3f80af730ae97b8173a0785e21518660eab01b81563acb",
+      "bytes": 886
+    },
+    {
+      "path": "test/parity/fixtures/devin/count-estimate-v2.json",
+      "sha256": "09adbf842fc543cc5cb3b7d85199620e0dede672f59537ce5774c0987e100386",
+      "bytes": 871
+    },
+    {
+      "path": "test/parity/fixtures/devin/failover-v2.json",
+      "sha256": "4da676474f4ece879694280d814bcc854900ca3590450ee049844030e6d0991d",
+      "bytes": 733
+    },
+    {
+      "path": "test/parity/fixtures/devin/http-v2.json",
+      "sha256": "48ad1827b7ecd89aba05a3af8a8542211caf89c9c22a293a95795720a8624d01",
+      "bytes": 1322
+    },
+    {
+      "path": "test/parity/fixtures/devin/isolation-v2.json",
+      "sha256": "1e42dc247ce62f18a9c5b200b353bbe53b12a0a0b3be88549a36b82a6bc118c7",
+      "bytes": 745
+    },
+    {
+      "path": "test/parity/fixtures/devin/lifecycle-v2.json",
+      "sha256": "5f60f2cf74970ef7ca4c6452361edd4c3d6eadf2528ae69b6a185d0ce5f38df2",
+      "bytes": 592
+    },
+    {
+      "path": "test/parity/fixtures/devin/models-v2.json",
+      "sha256": "4e184e094f813f4788448e9d52737088ad6aefd6c4260cd7ba93db0fb3d5e299",
+      "bytes": 607
+    },
+    {
+      "path": "test/parity/fixtures/devin/multimodal-v2.json",
+      "sha256": "1408970a355cb9cb2c5f74489d89d97dcdaedc01c8c67d1bdc3d87b04caabb7d",
+      "bytes": 1154
+    },
+    {
+      "path": "test/parity/fixtures/devin/sse-v2.json",
+      "sha256": "b06ea0d697a85d731dbce79f8b84357480f2d2cd91c1bcfeb00555f92e89777d",
+      "bytes": 846
+    },
+    {
+      "path": "test/parity/fixtures/devin/status-quota-v2.json",
+      "sha256": "ca2b006b66cf3fcba6462968727fcc97d0e6165ad4a61a566a5a04157c72bad9",
+      "bytes": 949
+    },
+    {
+      "path": "test/parity/fixtures/devin/thinking-v2.json",
+      "sha256": "53cc698d8b283ec9507e6ef73a8cfea728a419470ab3f806ec8b256e1457a647",
+      "bytes": 592
+    },
+    {
+      "path": "test/parity/fixtures/devin/tools-v2.json",
+      "sha256": "94bf31980aa72aa1f710e4a8fadc6e5835eaff24829f57c027f0c40a66ccee74",
+      "bytes": 770
+    },
+    {
+      "path": "test/parity/fixtures/gemini-models-v1.json",
+      "sha256": "8fb0a704acc9f4f91e4ee881479eeab3199fd82bf170b17096c3ba8168d67942",
+      "bytes": 455
+    },
+    {
+      "path": "test/parity/fixtures/gemini-v1.json",
+      "sha256": "2213b5438ce406f66bb274c84782e581dfc3d6a2a8bed5ae23f5d80c2654c1b0",
+      "bytes": 532
+    },
+    {
+      "path": "test/parity/fixtures/image-v1.json",
+      "sha256": "dfdbce2d1ec2d1a2d715887165cf1a6306760b46508c5ecc35f85d7bdde67949",
+      "bytes": 463
+    },
+    {
+      "path": "test/parity/fixtures/isolation-v1.json",
+      "sha256": "0205d3c11fe8eef68a722cf4559b4d077adb53f0586d7788b0dbe9b96082d7ce",
+      "bytes": 498
+    },
+    {
+      "path": "test/parity/fixtures/messages-v1.json",
+      "sha256": "2f409e3e6e6ce9427a353c6270d5a270cf99644609dfbedc903e65744c93c7f5",
+      "bytes": 682
+    },
+    {
+      "path": "test/parity/fixtures/models-v1.json",
+      "sha256": "536626f97144f9701d6e29718642be95eb7aeae65af984d377e992ba7203c941",
+      "bytes": 439
+    },
+    {
+      "path": "test/parity/fixtures/oauth-v1.json",
+      "sha256": "2365c570d0f90f28d58b01720766f105c6681c665373dd99c3b3d3b3f126f676",
+      "bytes": 646
+    },
+    {
+      "path": "test/parity/fixtures/quota-v1.json",
+      "sha256": "2d724425a9de02c46e342c6fcc7ae5a2e71d96b281967d94e8a25624b41eb6fe",
+      "bytes": 590
+    },
+    {
+      "path": "test/parity/fixtures/reasoning-v1.json",
+      "sha256": "761b6de3461fe4d2defb6880514e25399b2751fd08d0ec5f56bb299da19b333d",
+      "bytes": 605
+    },
+    {
+      "path": "test/parity/fixtures/rejected-media-v1.json",
+      "sha256": "7075ca3bbd6ff863b576204e2fd54710ca25bcf5f3e6db0a80c429508e24b739",
+      "bytes": 568
+    },
+    {
+      "path": "test/parity/fixtures/responses-sse-v1.json",
+      "sha256": "55083bf89a192439ba57826dd48716124765b9fd33f8ed2d7ea4aff25de90344",
+      "bytes": 920
+    },
+    {
+      "path": "test/parity/fixtures/responses-v1.json",
+      "sha256": "2f01a4267d05d44b3930a54257bc0add3a9511385c4f5f12566f73223c10b8c2",
+      "bytes": 583
+    },
+    {
+      "path": "test/parity/fixtures/restart-v1.json",
+      "sha256": "083104f685da709e4d82fb048a9884e5b78d8ae5b76b895152a60b8f7197c17d",
+      "bytes": 722
+    },
+    {
+      "path": "test/parity/fixtures/stream-lifecycle-v1.json",
+      "sha256": "b90e43a00af3f8741ce7e52a1e04decabeae92fadf0bea9f049ac72007d510ce",
+      "bytes": 536
+    },
+    {
+      "path": "test/parity/fixtures/tools-v1.json",
+      "sha256": "51bf6e71f537f1328bb0e4f5551dbd0bbc2de2fa76354c20e0fc57f8d3729820",
+      "bytes": 784
+    },
+    {
+      "path": "test/parity/fixtures/ws-v1.json",
+      "sha256": "38b88c81287cbd43fd28734ee428c3483868e7adafbd928904993f2073102e21",
+      "bytes": 498
+    },
+    {
+      "path": "test/parity/lab.gleam",
+      "sha256": "8cdca500b39e7d764d5f7eb0d148f5f2d73db08459ebfab3c7ad1b6a4a1fd0de",
+      "bytes": 8230
+    },
+    {
+      "path": "test/parity/lab_test.gleam",
+      "sha256": "370159f2ba636eb2324605578b31e83fe22cb7f8aaf66ea14c4bba26dc4c42a8",
+      "bytes": 4782
+    },
+    {
+      "path": "test/parity/manifest.json",
+      "sha256": "b90298fcab43caa15d7a2b6771403f34003e700fbbc0a894f7b2ec605caf3cbf",
+      "bytes": 10383
+    },
+    {
+      "path": "test/parity/mimic_parity_ffi.erl",
+      "sha256": "9b520e3257c483e3ca1d0460e9c98add6548960ee074a8fae4679a0e8ce35c0e",
+      "bytes": 2827
+    },
+    {
+      "path": "test/parity/runner.gleam",
+      "sha256": "ba46ab6437419331b770074a3444a0078cca79966caabb6ae8b832a62b4b925d",
+      "bytes": 8332
+    },
+    {
+      "path": "test/parity/scope.gleam",
+      "sha256": "d12d8ab0b768052be9263de5fce8f2c587cacefa0f1d05ba15400948a58bda8e",
+      "bytes": 1860
+    },
+    {
+      "path": "test/parity/target.gleam",
+      "sha256": "e220b358d04d0358146523548562433a339819e0319351882959c1551d4ac595",
+      "bytes": 1956
+    },
+    {
+      "path": "test/parity/v2/manifest.json",
+      "sha256": "3967cf7f03aff95d39f57d6b2590caecec5ba3f367bab11bde0f233121eb06d9",
+      "bytes": 16716
+    },
+    {
+      "path": "test/parity/v2/scope_test.gleam",
+      "sha256": "a374881265f7a2ac69188c8ca5d46af47eb0c3cbbcdc0a25e6bd5cdd9156f5e4",
+      "bytes": 3569
+    }
+  ],
+  "changes_from_v1": [
+    {
+      "path": "docs/parity/v2/README.md",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "703190dcb16dc417f91d6c7b48f7673862e8acb90d2ef04e95d89baa901a726d"
+    },
+    {
+      "path": "test/parity/fixtures/devin/auth-import-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "30a180bed8573d7ad5abb9882efc55110f453e5ec8ce4068c16ce3a187a600ae"
+    },
+    {
+      "path": "test/parity/fixtures/devin/auth-pkce-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "e1d0c3de2974efb89a3f80af730ae97b8173a0785e21518660eab01b81563acb"
+    },
+    {
+      "path": "test/parity/fixtures/devin/count-estimate-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "09adbf842fc543cc5cb3b7d85199620e0dede672f59537ce5774c0987e100386"
+    },
+    {
+      "path": "test/parity/fixtures/devin/failover-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "4da676474f4ece879694280d814bcc854900ca3590450ee049844030e6d0991d"
+    },
+    {
+      "path": "test/parity/fixtures/devin/http-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "48ad1827b7ecd89aba05a3af8a8542211caf89c9c22a293a95795720a8624d01"
+    },
+    {
+      "path": "test/parity/fixtures/devin/isolation-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "1e42dc247ce62f18a9c5b200b353bbe53b12a0a0b3be88549a36b82a6bc118c7"
+    },
+    {
+      "path": "test/parity/fixtures/devin/lifecycle-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "5f60f2cf74970ef7ca4c6452361edd4c3d6eadf2528ae69b6a185d0ce5f38df2"
+    },
+    {
+      "path": "test/parity/fixtures/devin/models-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "4e184e094f813f4788448e9d52737088ad6aefd6c4260cd7ba93db0fb3d5e299"
+    },
+    {
+      "path": "test/parity/fixtures/devin/multimodal-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "1408970a355cb9cb2c5f74489d89d97dcdaedc01c8c67d1bdc3d87b04caabb7d"
+    },
+    {
+      "path": "test/parity/fixtures/devin/sse-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "b06ea0d697a85d731dbce79f8b84357480f2d2cd91c1bcfeb00555f92e89777d"
+    },
+    {
+      "path": "test/parity/fixtures/devin/status-quota-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "ca2b006b66cf3fcba6462968727fcc97d0e6165ad4a61a566a5a04157c72bad9"
+    },
+    {
+      "path": "test/parity/fixtures/devin/thinking-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "53cc698d8b283ec9507e6ef73a8cfea728a419470ab3f806ec8b256e1457a647"
+    },
+    {
+      "path": "test/parity/fixtures/devin/tools-v2.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "94bf31980aa72aa1f710e4a8fadc6e5835eaff24829f57c027f0c40a66ccee74"
+    },
+    {
+      "path": "test/parity/runner.gleam",
+      "change": "modified",
+      "before_sha256": "b27a0a21393e9f2e11050ec258ab404d3b33abfb5fb43e8f8241b405ce2edc57",
+      "after_sha256": "ba46ab6437419331b770074a3444a0078cca79966caabb6ae8b832a62b4b925d"
+    },
+    {
+      "path": "test/parity/scope.gleam",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "d12d8ab0b768052be9263de5fce8f2c587cacefa0f1d05ba15400948a58bda8e"
+    },
+    {
+      "path": "test/parity/v2/manifest.json",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "3967cf7f03aff95d39f57d6b2590caecec5ba3f367bab11bde0f233121eb06d9"
+    },
+    {
+      "path": "test/parity/v2/scope_test.gleam",
+      "change": "added",
+      "before_sha256": null,
+      "after_sha256": "a374881265f7a2ac69188c8ca5d46af47eb0c3cbbcdc0a25e6bd5cdd9156f5e4"
+    }
+  ],
+  "diff_sha256": "74ad78a59d04a44109ab2e1adeddca0bd76cfd68fba7f541c23f6d7c3ce7c6b3",
+  "release_scope_manifest_sha256": "3967cf7f03aff95d39f57d6b2590caecec5ba3f367bab11bde0f233121eb06d9",
+  "commands": {
+    "schema": "gleam run -m parity/runner -- check --manifest test/parity/v2/manifest.json",
+    "mock": "gleam run -m parity/runner -- baseline scripts/parity/baseline-drivers.json --manifest test/parity/v2/manifest.json",
+    "strict_missing_cpa": "gleam run -m parity/runner -- release scripts/parity/baseline-drivers.json --manifest test/parity/v2/manifest.json",
+    "strict_with_drivers": "gleam run -m parity/runner -- release /absolute/path/to/drivers.json --manifest test/parity/v2/manifest.json"
+  },
+  "validation": {
+    "gleam_tests": 199,
+    "python_localhost_tests": 7,
+    "schema_exit": 0,
+    "baseline_exit": 1,
+    "strict_missing_cpa_exit": 1,
+    "required_rows": 37,
+    "devin_required_rows": 15,
+    "excluded_providers": [
+      "gemini",
+      "antigravity",
+      "copilot"
+    ],
+    "live_verified": "not_run"
+  }
+}

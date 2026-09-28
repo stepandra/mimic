@@ -7,6 +7,11 @@ import gleam/otp/actor
 import gleam/result
 import gleam/string
 import gleam/uri
+import mimic/providers/contracts.{
+  type BinaryMedia, type Failure, type HttpRequest, ConnectProto, Failure, Http1,
+  InvalidConfiguration, InvalidResponse, NotSent, Proto, Unavailable, Uncertain,
+  Unsupported,
+}
 import mimic/types.{
   type Capture, type Header, type WireResponse, Header, WireResponse,
 }
@@ -57,6 +62,13 @@ fn connect(
 @external(erlang, "mimic_egress_ffi", "write")
 fn write(socket: Socket, bytes: String, timeout: Int) -> Result(Nil, String)
 
+@external(erlang, "mimic_egress_ffi", "write")
+fn write_bytes(
+  socket: Socket,
+  bytes: BitArray,
+  timeout: Int,
+) -> Result(Nil, String)
+
 @external(erlang, "mimic_egress_ffi", "line")
 fn line(socket: Socket, timeout: Int) -> Result(String, String)
 
@@ -97,6 +109,325 @@ pub fn close(client: Client) -> Result(Nil, String) {
 
 pub fn cli(_args: List(String)) -> Result(String, String) {
   Error("egress is a library client; use start/send/close")
+}
+
+/// Single-request pull transport. The execution process owns the socket;
+/// process death closes it. No reuse across credentials and no automatic replay.
+pub opaque type Stream {
+  Stream(socket: Socket, framing: Framing, pending: Int, total: Int)
+}
+
+type ResponseMedia {
+  JsonSse
+  Binary(BinaryMedia)
+}
+
+@external(erlang, "mimic_egress_ffi", "connect_with_ca")
+fn connect_with_ca(
+  host: String,
+  port: Int,
+  tls: Bool,
+  timeout: Int,
+  ca_file: Option(String),
+) -> Result(Socket, String)
+
+pub fn stream_open(
+  endpoint: String,
+  capture: Capture,
+  ca_file: Option(String),
+) -> Result(#(Int, List(Header), Stream), Failure) {
+  use origin <- result.try(
+    parse_origin(endpoint)
+    |> result.replace_error(Failure(InvalidConfiguration, NotSent, None)),
+  )
+  use _ <- result.try(
+    case
+      capture.endpoint == endpoint
+      && capture.http_version == "HTTP/1.1"
+      && string.starts_with(capture.target, "/")
+      && !string.starts_with(capture.target, "//")
+      && values(capture.headers, "upgrade") == []
+      && values(capture.headers, "expect") == []
+      && values(capture.headers, "te") == []
+      && approved_host(capture.headers, origin)
+      && valid_text_body(capture.body)
+    {
+      True -> Ok(Nil)
+      False -> Error(Failure(InvalidConfiguration, NotSent, None))
+    },
+  )
+  use raw <- result.try(
+    wire.render_request(capture)
+    |> result.replace_error(Failure(InvalidConfiguration, NotSent, None)),
+  )
+  send_stream(
+    origin,
+    capture.method,
+    bit_array.from_string(raw),
+    ca_file,
+    JsonSse,
+  )
+}
+
+/// Explicit binary-only boundary; never construct a Capture or UTF-8 String
+/// from the body. Protocol/media requirements are validated before connecting.
+pub fn stream_open_binary(
+  endpoint: String,
+  plan: HttpRequest,
+  ca_file: Option(String),
+) -> Result(#(Int, List(Header), Stream), Failure) {
+  use _ <- result.try(case plan.protocol {
+    Http1 -> Ok(Nil)
+    _ -> Error(Failure(Unsupported, NotSent, None))
+  })
+  use origin <- result.try(
+    parse_origin(endpoint)
+    |> result.replace_error(Failure(InvalidConfiguration, NotSent, None)),
+  )
+  let length = bit_array.byte_size(plan.body)
+  // CPA's default Go transport is not proof of actual Devin H1 compatibility.
+  // Until separately qualified, binary H1 is for numeric-loopback fixtures only.
+  use _ <- result.try(case origin.host == "127.0.0.1" || origin.host == "::1" {
+    True -> Ok(Nil)
+    False -> Error(Failure(Unsupported, NotSent, None))
+  })
+  use _ <- result.try(
+    case
+      plan.endpoint == endpoint
+      && length <= max_body_bytes
+      && bit_array.bit_size(plan.body) % 8 == 0
+      && plan.method != ""
+      && safe_header(plan.method)
+      && string.starts_with(plan.target, "/")
+      && !string.starts_with(plan.target, "//")
+      && visible_ascii(bit_array.from_string(plan.target))
+      && list.all(plan.headers, fn(header) {
+        header.name != ""
+        && safe_header(header.name)
+        && safe_value(header.value)
+        && string.byte_size(header.name) + string.byte_size(header.value) + 4
+        <= max_line_bytes
+      })
+      && list.all(
+        ["upgrade", "expect", "te", "transfer-encoding", "content-encoding"],
+        fn(name) { values(plan.headers, name) == [] },
+      )
+      && approved_host(plan.headers, origin)
+      && values(plan.headers, "content-length") == [int.to_string(length)]
+      && media_matches(plan.headers, plan.media)
+    {
+      True -> Ok(Nil)
+      False -> Error(Failure(InvalidConfiguration, NotSent, None))
+    },
+  )
+  let first_line = plan.method <> " " <> plan.target <> " HTTP/1.1\r\n"
+  let headers =
+    first_line
+    <> {
+      list.map(plan.headers, fn(h) { h.name <> ": " <> h.value })
+      |> string.join("\r\n")
+    }
+    <> "\r\n\r\n"
+  use _ <- result.try(
+    case
+      string.byte_size(headers) <= max_header_bytes
+      && string.byte_size(first_line) <= max_line_bytes
+    {
+      True -> Ok(Nil)
+      False -> Error(Failure(InvalidConfiguration, NotSent, None))
+    },
+  )
+  let raw = bit_array.append(bit_array.from_string(headers), plan.body)
+  send_stream(origin, plan.method, raw, ca_file, Binary(plan.media))
+}
+
+fn visible_ascii(value: BitArray) -> Bool {
+  case value {
+    <<>> -> True
+    <<byte, rest:bytes>> if byte >= 33 && byte <= 126 -> visible_ascii(rest)
+    _ -> False
+  }
+}
+
+fn valid_text_body(body: String) -> Bool {
+  result.is_ok(bit_array.to_string(bit_array.from_string(body)))
+}
+
+fn media_matches(headers: List(Header), expected: BinaryMedia) -> Bool {
+  let expected = case expected {
+    ConnectProto -> "application/connect+proto"
+    Proto -> "application/proto"
+  }
+  case values(headers, "content-type") {
+    [value] -> string.lowercase(string.trim(value)) == expected
+    _ -> False
+  }
+}
+
+fn send_stream(
+  origin: Origin,
+  method: String,
+  raw: BitArray,
+  ca_file: Option(String),
+  media: ResponseMedia,
+) -> Result(#(Int, List(Header), Stream), Failure) {
+  use socket <- result.try(
+    connect_with_ca(
+      origin.host,
+      origin.port,
+      origin.scheme == "https",
+      timeout_ms,
+      ca_file,
+    )
+    |> result.replace_error(Failure(Unavailable, NotSent, None)),
+  )
+  let deadline = now_ms() + timeout_ms
+  let answer = {
+    use _ <- result.try(write_bytes(socket, raw, timeout_ms))
+    read_stream_head(socket, method, deadline, 0, media)
+  }
+  case answer {
+    Ok(#(status, headers, framing)) ->
+      Ok(#(status, headers, Stream(socket, framing, 0, 0)))
+    Error(_) -> {
+      close_socket(socket)
+      Error(Failure(Unavailable, Uncertain, None))
+    }
+  }
+}
+
+fn approved_host(headers: List(Header), origin: Origin) -> Bool {
+  case values(headers, "host") {
+    [value] ->
+      case parse_origin(origin.scheme <> "://" <> value) {
+        Ok(host) ->
+          !string.contains(value, "/")
+          && string.lowercase(host.host) == string.lowercase(origin.host)
+          && host.port == origin.port
+          && host.scheme == origin.scheme
+        Error(_) -> False
+      }
+    _ -> False
+  }
+}
+
+fn read_stream_head(
+  socket: Socket,
+  method: String,
+  deadline: Int,
+  interim: Int,
+  media: ResponseMedia,
+) -> Result(#(Int, List(Header), Framing), String) {
+  use raw <- result.try(line(socket, remaining(deadline)))
+  use status <- result.try(parse_status(raw))
+  use headers <- result.try(
+    read_headers(socket, deadline, string.byte_size(raw), []),
+  )
+  case status < 200 {
+    True if interim < 4 && headers == [] ->
+      read_stream_head(socket, method, deadline, interim + 1, media)
+    True -> Error("Unsupported informational response")
+    False -> {
+      use framing <- result.try(response_framing(status, method, headers))
+      use _ <- result.try(case media, framing {
+        JsonSse, _ -> supported_media(headers, framing)
+        Binary(expected), _ ->
+          case media_matches(headers, expected) {
+            True -> Ok(Nil)
+            False ->
+              case values(headers, "content-type"), framing {
+                // No payload exists to interpret. A non-success empty rejection
+                // may omit media, but conflicting/duplicate media never passes.
+                [], NoBody -> Ok(Nil)
+                [], Fixed(0) if status >= 300 -> Ok(Nil)
+                _, _ -> Error("Unsupported binary response media")
+              }
+          }
+      })
+      Ok(#(status, headers, framing))
+    }
+  }
+}
+
+pub fn stream_next(
+  stream: Stream,
+) -> Result(Option(#(BitArray, Stream)), Failure) {
+  case stream_read(stream, now_ms() + timeout_ms) {
+    Ok(value) -> Ok(value)
+    Error(_) -> Error(Failure(InvalidResponse, Uncertain, None))
+  }
+}
+
+/// Close on every terminal result from stream_next. The runtime does this once
+/// in its finally path; stream_next itself never closes behind its caller.
+pub fn stream_cancel(stream: Stream) -> Nil {
+  close_socket(stream.socket)
+}
+
+fn stream_read(
+  stream: Stream,
+  deadline: Int,
+) -> Result(Option(#(BitArray, Stream)), String) {
+  case stream.framing {
+    NoBody | Fixed(0) -> Ok(None)
+    Fixed(left) -> {
+      let size = int.min(left, 16_384)
+      use chunk <- result.try(bytes(stream.socket, size, remaining(deadline)))
+      Ok(Some(#(chunk, Stream(..stream, framing: Fixed(left - size)))))
+    }
+    Chunked -> {
+      use size <- result.try(case stream.pending {
+        0 -> {
+          use raw <- result.try(line(stream.socket, remaining(deadline)))
+          parse_chunk_size(raw)
+        }
+        n -> Ok(n)
+      })
+      case size {
+        0 -> {
+          use trailer <- result.try(line(stream.socket, remaining(deadline)))
+          case trailer {
+            "\r\n" -> Ok(None)
+            _ -> Error("Chunk trailers unsupported")
+          }
+        }
+        _ if size > max_body_bytes - stream.total ->
+          Error("Stream exceeds limit")
+        _ -> {
+          let count = int.min(size, 16_384)
+          use chunk <- result.try(bytes(
+            stream.socket,
+            count,
+            remaining(deadline),
+          ))
+          use _ <- result.try(case count == size {
+            True -> {
+              use separator <- result.try(bytes(
+                stream.socket,
+                2,
+                remaining(deadline),
+              ))
+              case separator {
+                <<13, 10>> -> Ok(Nil)
+                _ -> Error("Invalid chunk separator")
+              }
+            }
+            False -> Ok(Nil)
+          })
+          Ok(
+            Some(#(
+              chunk,
+              Stream(
+                ..stream,
+                pending: size - count,
+                total: stream.total + count,
+              ),
+            )),
+          )
+        }
+      }
+    }
+  }
 }
 
 fn ask(
@@ -173,6 +504,11 @@ fn do_send(
   use _ <- result.try(case capture.http_version {
     "HTTP/1.1" -> Ok(Nil)
     _ -> Error("only HTTP/1.1 requests are supported")
+  })
+  use _ <- result.try(case valid_text_body(capture.body) {
+    True -> Ok(Nil)
+    False ->
+      Error("request body is not UTF-8; binary requires an explicit plan")
   })
   use raw <- result.try(wire.render_request(capture))
   use _ <- result.try(
@@ -393,9 +729,16 @@ fn safe_header(name: String) -> Bool {
 }
 
 fn safe_value(value: String) -> Bool {
-  !string.contains(value, "\r")
-  && !string.contains(value, "\n")
-  && !string.contains(value, "\u{0000}")
+  field_octets(bit_array.from_string(value))
+}
+
+fn field_octets(value: BitArray) -> Bool {
+  case value {
+    <<>> -> True
+    <<byte, rest:bytes>> if byte == 9 || { byte >= 32 && byte != 127 } ->
+      field_octets(rest)
+    _ -> False
+  }
 }
 
 fn response_framing(

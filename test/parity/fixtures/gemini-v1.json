@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"gemini-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","x_goog_api_key","gemini_parts_preserved"],
+  "driver_kind":"http","method":"POST","path":"/v1beta/models/synthetic-model:generateContent","expected_status":200,
+  "request":{"contents":[{"role":"user","parts":[{"text":"ping"}]}]},
+  "upstream_response":{"candidates":[{"content":{"role":"model","parts":[{"text":"pong"}]},"finishReason":"STOP"}]}
+}

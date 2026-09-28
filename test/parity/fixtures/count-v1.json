@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"count-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","exact_token_count","upstream_auth_isolation"],
+  "driver_kind":"http","method":"POST","path":"/v1/messages/count_tokens","expected_status":200,
+  "request":{"model":"synthetic-model","messages":[{"role":"user","content":"ping"}]},
+  "upstream_response":{"input_tokens":7}
+}

@@ -1,5 +1,5 @@
 -module(mimic_egress_ffi).
--export([connect/4, write/3, line/2, bytes/3, probe/1, close/1, now_ms/0]).
+-export([connect/4, connect_with_ca/5, write/3, line/2, bytes/3, probe/1, close/1, now_ms/0]).
 
 %% Socket operations only. HTTP status, headers and message framing are
 %% interpreted by mimic/egress.gleam. A socket is owned by its Gleam actor.
@@ -8,10 +8,22 @@ connect(Host, Port, false, Timeout) ->
                {send_timeout, Timeout}, {send_timeout_close, true}],
     wrap_connect(gen_tcp:connect(binary_to_list(Host), Port, Options, Timeout), tcp);
 connect(Host, Port, true, Timeout) ->
+    connect_tls(Host, Port, Timeout, {cacerts, public_key:cacerts_get()}).
+
+connect_with_ca(Host, Port, false, Timeout, none) ->
+    connect(Host, Port, false, Timeout);
+connect_with_ca(Host, Port, false, Timeout, {some, _}) ->
+    connect(Host, Port, false, Timeout);
+connect_with_ca(Host, Port, true, Timeout, none) ->
+    connect(Host, Port, true, Timeout);
+connect_with_ca(Host, Port, true, Timeout, {some, File}) ->
+    connect_tls(Host, Port, Timeout, {cacertfile, binary_to_list(File)}).
+
+connect_tls(Host, Port, Timeout, Trust) ->
     _ = ssl:start(),
     Options = [binary, {active, false}, {packet, raw},
                {verify, verify_peer},
-               {cacerts, public_key:cacerts_get()},
+               Trust,
                {server_name_indication, binary_to_list(Host)},
                {customize_hostname_check,
                 [{match_fun, public_key:pkix_verify_hostname_match_fun(https)}]},

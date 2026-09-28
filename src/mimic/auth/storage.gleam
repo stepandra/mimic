@@ -1,5 +1,6 @@
 import gleam/bit_array
 import gleam/list
+import gleam/option.{type Option, None, Some}
 
 /// Store directories must be pre-created by the operator with mode 0700.
 /// Contents are plaintext; filesystem permissions are the protection boundary.
@@ -64,6 +65,44 @@ pub fn read_quota_ledger(store: Store) -> Result(String, String) {
   secure_read_quota(store.directory)
 }
 
+/// Versioned runtime records deliberately do not share the legacy credential
+/// filename prefix: legacy auth.load/list_metadata remain unchanged.
+pub fn read_runtime(store: Store, key: String) -> Result(String, String) {
+  secure_read(store.directory, runtime_filename(key))
+}
+
+pub fn write_runtime(
+  store: Store,
+  key: String,
+  contents: String,
+) -> Result(Nil, String) {
+  mutate_runtime(store.directory, runtime_filename(key), None, Some(contents))
+}
+
+pub fn compare_write_runtime(
+  store: Store,
+  key: String,
+  previous: String,
+  contents: String,
+) -> Result(Nil, String) {
+  mutate_runtime(
+    store.directory,
+    runtime_filename(key),
+    Some(previous),
+    Some(contents),
+  )
+}
+
+pub fn delete_runtime(store: Store, key: String) -> Result(Nil, String) {
+  mutate_runtime(store.directory, runtime_filename(key), None, None)
+}
+
+fn runtime_filename(key: String) -> String {
+  "runtime-"
+  <> bit_array.base64_url_encode(bit_array.from_string(key), False)
+  <> ".json"
+}
+
 pub fn write_quota_ledger(
   store: Store,
   contents: String,
@@ -108,4 +147,12 @@ fn secure_write(
   directory: String,
   filename: String,
   contents: String,
+) -> Result(Nil, String)
+
+@external(erlang, "mimic_provider_runtime_ffi", "mutate_runtime")
+fn mutate_runtime(
+  directory: String,
+  filename: String,
+  expected: Option(String),
+  contents: Option(String),
 ) -> Result(Nil, String)

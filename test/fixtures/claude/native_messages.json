@@ -1,0 +1,20 @@
+{
+  "model": "claude-synthetic",
+  "max_tokens": 1024,
+  "thinking": {"type": "enabled", "budget_tokens": 512},
+  "tools": [
+    {"name": "synthetic_tool", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+  ],
+  "system": [{"type": "text", "text": "Synthetic local compatibility fixture."}],
+  "messages": [
+    {"role": "user", "content": "Use the synthetic tool."},
+    {"role": "assistant", "content": [
+      {"type": "thinking", "thinking": "Synthetic reasoning.", "signature": "synthetic-signature"},
+      {"type": "tool_use", "id": "synthetic-call", "name": "synthetic_tool", "input": {"cache_control": {"type": "not-a-protocol-marker"}}}
+    ]},
+    {"role": "user", "content": [
+      {"type": "tool_result", "tool_use_id": "synthetic-call", "content": "Synthetic result: λ", "cache_control": {"type": "ephemeral"}}
+    ]}
+  ],
+  "synthetic_extension": {"retain": true}
+}

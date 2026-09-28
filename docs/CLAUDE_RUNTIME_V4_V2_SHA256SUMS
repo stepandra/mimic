@@ -1,0 +1,3 @@
+f55b963df13747032efdd12eca39454139ae952ebd5b735b222838193509732b  test/fixtures/claude/runtime_v4/run.py
+a9979bc5d0f8dbd13471b9ef3315aa7a5d330b7ee25f3460011203c0666e3232  test/fixtures/claude/runtime_v4/claude_runtime_v4_test.gleam.in
+d274d07ecb435b21e68d60b2993811f7619f72e6b47dc3dc59a06a536cd955f1  docs/CLAUDE_OAUTH_JSON_VALIDATION.md

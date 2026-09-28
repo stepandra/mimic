@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"devin-tools-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["tool_schema_preserved","call_id_preserved","result_correlates_to_call","tool_arguments_reassembled","native_proto_tool_fields","source_applicability_reviewed"],
+  "path":"/v1/responses","request":{"model":"devin/swe-2","input":[{"type":"function_call","call_id":"synthetic-call","name":"weather","arguments":"{\"city\":\"Oslo\"}"},{"type":"function_call_output","call_id":"synthetic-call","output":"snow"}]},
+  "argument_fragments":["{\"ci","ty\":\"Os","lo\"}"],
+  "note":"Orphan-result downgrade versus rejection must be source-reviewed, not inferred from another provider."
+}

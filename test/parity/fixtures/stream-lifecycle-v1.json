@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"stream-lifecycle-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["terminal_exactly_once","truncated_stream_errors","downstream_disconnect_cancels_upstream","lease_released","no_retry_after_delivery"],
+  "driver_kind":"scenario","faults":["upstream_eof_before_terminal","downstream_close_after_first_delta","explicit_cancel","upstream_429_after_first_delta"],
+  "request":{"model":"synthetic-model","input":"ping","stream":true}
+}

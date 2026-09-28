@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"devin-failover-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,"driver_kind":"scenario",
+  "required_checks":["429_retry_after_units","bounded_pre_delivery_failover","cooldown_persisted","no_retry_after_delivery","account_session_isolation_on_failover","source_applicability_reviewed"],
+  "clock_ms":1000000,"upstream_script":[{"account":"synthetic-a","status":429,"headers":[["Retry-After","2"]]},{"account":"synthetic-b","status":200}],
+  "steps":["request_before_reset","request_at_reset","restart_without_reseeding","uncertain_delivery_no_replay"],
+  "note":"HTTP Retry-After classification is distinct from protobuf status/quota observation."
+}

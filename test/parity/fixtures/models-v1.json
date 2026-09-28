@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"models-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","model_catalog_shape","auth_scoped_models"],
+  "driver_kind":"http","method":"GET","path":"/v1/models","expected_status":200,
+  "request":null,"upstream_response":{"object":"list","data":[{"id":"synthetic-model","object":"model","owned_by":"synthetic"}]}
+}

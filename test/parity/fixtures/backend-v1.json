@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"backend-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["exact_backend_selected","auth_mode_preserved","native_envelope","no_generic_fallback","ordered_headers_preserved"],
+  "driver_kind":"scenario","model":"synthetic-model",
+  "note":"Plan dimensions choose the backend. Native Kimi and Grok Build must not be satisfied by a generic OpenAI-compatible echo; Antigravity must unwrap its gateway envelope."
+}

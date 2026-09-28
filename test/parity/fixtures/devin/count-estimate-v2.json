@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"devin-count-estimate-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["authenticated_http","estimate_is_floor_executor_payload_bytes_div_four","utf8_bytes_not_characters","total_and_input_tokens_match_estimate","zero_native_count_requests","estimate_provenance_recorded"],
+  "path":"/v1/messages/count_tokens","request":{"model":"devin/swe-2","messages":[{"role":"user","content":"ping 🧪"}]},
+  "measurement_kind":"estimate","formula":"floor(byte_length(actual executor req.Payload) / 4)",
+  "note":"CPA has no Devin native count endpoint here. Do not claim an exact tokenizer result or assume executor bytes equal caller JSON bytes after translation. Record estimate provenance in evidence, not an invented native API response field."
+}

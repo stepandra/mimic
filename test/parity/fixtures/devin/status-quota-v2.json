@@ -1,0 +1,8 @@
+{
+  "schema_version":1,"id":"devin-status-quota-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,"driver_kind":"scenario",
+  "required_checks":["unary_status_request_observed","status_metadata_account_scoped","quota_percent_and_reset_time_preserved","same_permanent_session_token","zero_rotating_oauth_refresh_calls","status_persisted_no_reseed","real_ingress_after_status_update"],
+  "status_path":"/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+  "status_headers":[["Content-Type","application/proto"],["Connect-Protocol-Version","1"]],
+  "synthetic_status":{"daily_quota_remaining_percent":25,"weekly_quota_remaining_percent":50,"daily_reset_epoch_seconds":2000,"weekly_reset_epoch_seconds":3000},
+  "note":"Refresh means profile/status/quota observation, not renewal of an expiring access token. No Sentry-Trace on unary status. Protocol applicability remains source-gated."
+}

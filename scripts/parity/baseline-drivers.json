@@ -1,0 +1,10 @@
+{
+  "mimic": {
+    "argv": ["python3", "scripts/parity/local_driver.py"],
+    "revision": "c3ca7e805b8e4c3f8271468fbbe46271a5b0e8f4"
+  },
+  "cpa": {
+    "argv": [],
+    "revision": "acdace936fa7df2905500c7f5e0a97d683138dea"
+  }
+}

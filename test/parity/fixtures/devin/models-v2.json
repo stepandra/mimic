@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"devin-models-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["authenticated_http","provider_scoped_catalog","model_uid_and_effort_mapping","catalog_provenance_pinned","no_live_catalog_download","source_applicability_reviewed"],
+  "path":"/v1/models","synthetic_model_names":["devin/swe-2","devin/swe-2-high"],
+  "note":"These are deterministic selector inputs, not a measured live availability claim. Fixture catalog must be explicitly injected; updater traffic forbidden."
+}

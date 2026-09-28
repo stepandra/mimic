@@ -1,0 +1,5 @@
+{
+  "schema_version":1,"id":"image-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["image_bytes_preserved","media_type_preserved","content_block_order","no_remote_media_fetch"],
+  "driver_kind":"scenario","media":{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII="}}
+}

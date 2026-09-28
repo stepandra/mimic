@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"compact-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","compact_shape","encrypted_content_preserved"],
+  "driver_kind":"http","method":"POST","path":"/v1/responses/compact","expected_status":200,
+  "request":{"model":"synthetic-model","input":[{"role":"user","content":"ping"}]},
+  "upstream_response":{"object":"response.compaction","output":[{"type":"compaction","encrypted_content":"synthetic-opaque-not-real-encryption"}]}
+}

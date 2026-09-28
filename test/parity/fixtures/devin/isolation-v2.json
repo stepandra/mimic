@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"devin-isolation-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,"driver_kind":"scenario",
+  "required_checks":["permanent_tokens_survive_restart","no_expiry_or_refresh_token_fabrication","account_scoped_session_and_cascade","same_session_label_no_cross_account_reuse","revocation_effective","no_reseed"],
+  "accounts":[{"id":"synthetic-a","token":"devin-session-token$synthetic-a"},{"id":"synthetic-b","token":"devin-session-token$synthetic-b"}],
+  "session_labels":["shared-synthetic-session","shared-synthetic-session"],"token_lifetime":"permanent",
+  "steps":["concurrent_chat_requests","persist","restart_without_reseeding","revoke_a","assert_b_isolated"]
+}

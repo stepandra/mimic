@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"reasoning-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["thinking_budget_preserved","opaque_signature_preserved","reasoning_not_visible_text","reasoning_turn_replay"],
+  "driver_kind":"scenario","request":{"model":"synthetic-model","max_tokens":2048,"thinking":{"type":"enabled","budget_tokens":1024},"messages":[{"role":"user","content":"ping"}]},
+  "response_blocks":[{"type":"thinking","thinking":"synthetic reasoning","signature":"synthetic-opaque-signature"},{"type":"text","text":"pong"}]
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"tools-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["tool_schema_preserved","call_id_preserved","tool_result_turn","parallel_call_order","streamed_arguments_reassembled"],
+  "driver_kind":"scenario","request":{"model":"synthetic-model","max_tokens":64,"tools":[{"name":"weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],"messages":[{"role":"user","content":"weather?"},{"role":"assistant","content":[{"type":"tool_use","id":"call-synthetic","name":"weather","input":{"city":"Oslo"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-synthetic","content":"snow"}]}]},
+  "argument_fragments":["{\"ci","ty\":\"Os","lo\"}"]
+}

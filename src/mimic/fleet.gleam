@@ -7,9 +7,10 @@ import gleam/uri
 import mimic/quota.{type Ledger}
 
 pub type Egress {
-  /// Only loopback endpoints are supported until a real per-credential
-  /// bound/proxied transport exists.
+  /// Safe local fixture default.
   LocalLoopback
+  /// Explicit operator ownership approval. Direct TLS, never a proxy or redirect.
+  OperatorHttps
   Proxy(url: String)
   BoundAddress(address: String)
 }
@@ -87,6 +88,27 @@ pub fn validate(profile: Profile) -> Result(Nil, String) {
               Error(
                 "Local egress only supports explicit loopback HTTP upstream",
               )
+          }
+        OperatorHttps ->
+          case uri.parse(profile.upstream_url) {
+            Ok(uri.Uri(
+              scheme: Some("https"),
+              host: Some(host),
+              port: port,
+              path: path,
+              query: None,
+              fragment: None,
+              userinfo: None,
+            ))
+              if host != "" && { path == "" || path == "/" }
+            ->
+              case port {
+                None -> Ok(Nil)
+                Some(p) if p > 0 && p < 65_536 -> Ok(Nil)
+                _ -> Error("Invalid HTTPS upstream port")
+              }
+            _ ->
+              Error("Operator HTTPS egress requires an explicit HTTPS origin")
           }
         Proxy(_) ->
           Error(
@@ -228,6 +250,34 @@ pub fn end_session(state: State, session_id: String) -> State {
   case has_active_lease {
     True -> state
     False -> State(..state, sticky: dict.delete(state.sticky, session_id))
+  }
+}
+
+/// Restrict selection to a provider/model's eligible accounts. A cooling sticky
+/// account may be replaced only after all its session leases are released.
+pub fn select_eligible(
+  state: State,
+  ledger: Ledger,
+  session_id: String,
+  eligible: List(String),
+  now_ms: Int,
+) -> Result(#(State, Selection), String) {
+  let profiles =
+    list.filter(state.profiles, fn(p) {
+      list.contains(eligible, p.id) && available(state, ledger, p, now_ms)
+    })
+  let state = case dict.get(state.sticky, session_id) {
+    Ok(id) ->
+      case list.any(profiles, fn(p) { p.id == id }) {
+        True -> state
+        False -> end_session(state, session_id)
+      }
+    Error(_) -> state
+  }
+  case select(State(..state, profiles: profiles), ledger, session_id, now_ms) {
+    Ok(#(next, selection)) ->
+      Ok(#(State(..next, profiles: state.profiles), selection))
+    Error(error) -> Error(error)
   }
 }
 

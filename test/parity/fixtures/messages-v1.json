@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"messages-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","upstream_body","upstream_auth_isolation","response_semantics"],
+  "driver_kind":"http","method":"POST","path":"/v1/messages","expected_status":200,
+  "request":{"model":"synthetic-model","max_tokens":32,"messages":[{"role":"user","content":"ping"}]},
+  "upstream_response":{"id":"synthetic-message","type":"message","role":"assistant","model":"synthetic-model","content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}
+}

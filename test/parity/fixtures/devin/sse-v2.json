@@ -1,0 +1,8 @@
+{
+  "schema_version":1,"id":"devin-sse-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["authenticated_http","connect_to_ordered_sse","one_terminal","no_events_after_terminal","incremental_delivery","binary_segmentation_invariant","transport_applicability_reviewed"],
+  "path":"/v1/responses","request":{"model":"devin/swe-2","input":"ping","stream":true},
+  "connect_frame_kinds":[{"flag":0,"meaning":"protobuf data"},{"flag":1,"meaning":"compressed data"},{"flag":2,"meaning":"end-stream trailer"}],
+  "segmentation_bytes":[1,3,11],"synthetic_output_text":"pong",
+  "note":"Frame kinds are source-derived schema, not captured native traffic. Driver must construct valid synthetic protobuf; raw bytes may contain only synthetic credentials."
+}

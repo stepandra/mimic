@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"gemini-models-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","gemini_catalog_shape","auth_scoped_models"],
+  "driver_kind":"http","method":"GET","path":"/v1beta/models","expected_status":200,
+  "request":null,"upstream_response":{"models":[{"name":"models/synthetic-model","supportedGenerationMethods":["generateContent"]}]}
+}

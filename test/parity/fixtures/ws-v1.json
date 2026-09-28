@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"ws-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_upgrade","ordered_frames","terminal","close_handshake","session_isolation"],
+  "driver_kind":"scenario","path":"/v1/responses",
+  "client_frames":[{"type":"response.create","response":{"model":"synthetic-model","input":"ping"}}],
+  "faults":["close_after_first_delta","invalid_json_frame","second_session_same_response_id"]
+}

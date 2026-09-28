@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"codex-alias-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["authenticated_http","alias_semantics","upstream_backend_identity"],
+  "driver_kind":"http","method":"POST","path":"/backend-api/codex/responses","expected_status":200,
+  "request":{"model":"synthetic-model","input":"ping","stream":false},
+  "upstream_response":{"id":"synthetic-response","object":"response","status":"completed","output":[]}
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"quota-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,
+  "required_checks":["429_classified","reset_units_correct","cooldown_persisted","eligible_account_failover","no_retry_after_delivery","bounded_attempts"],
+  "driver_kind":"scenario","clock_ms":1000000,
+  "upstream_script":[{"account":"synthetic-a","status":429,"headers":[["Retry-After","2"],["x-ratelimit-reset","1002"]]},{"account":"synthetic-b","status":200}],
+  "steps":["request_at_1000000","request_at_1001999","request_at_1002000","restart"]
+}

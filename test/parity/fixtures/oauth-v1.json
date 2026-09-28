@@ -1,0 +1,8 @@
+{
+  "schema_version":1,"id":"oauth-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,
+  "required_checks":["expired_token_not_sent","single_refresh_http_exchange","all_waiters_share_result","rotated_refresh_persisted","refresh_failure_fails_closed"],
+  "driver_kind":"scenario","clock_ms":2000,"concurrency":8,
+  "credential":{"access_token":"synthetic-expired","refresh_token":"synthetic-refresh","expires_at_ms":1000},
+  "token_response":{"access_token":"synthetic-rotated","refresh_token":"synthetic-next-refresh","expires_in":3600},
+  "faults":["token_endpoint_401","token_endpoint_429"]
+}

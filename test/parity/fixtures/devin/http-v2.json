@@ -1,0 +1,13 @@
+{
+  "schema_version":1,"id":"devin-http-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["authenticated_http","devin_backend_selected","basic_token_token_auth","token_in_proto_metadata","connect_binary_body_preserved","ordered_headers_preserved","client_response_semantics","transport_applicability_reviewed"],
+  "requests_by_protocol":{
+    "chat_completions":{"path":"/v1/chat/completions","body":{"model":"devin/swe-2","messages":[{"role":"user","content":"ping"}],"stream":false}},
+    "messages":{"path":"/v1/messages","body":{"model":"devin/swe-2","max_tokens":32,"messages":[{"role":"user","content":"ping"}]}},
+    "responses":{"path":"/v1/responses","body":{"model":"devin/swe-2","input":"ping","stream":false}}
+  },
+  "upstream_path":"/exa.api_server_pb.ApiServerService/GetChatMessage",
+  "upstream_headers":[["Authorization","Basic devin-session-token$synthetic-a-devin-session-token$synthetic-a"],["Content-Type","application/connect+proto"],["Connect-Protocol-Version","1"]],
+  "transport_applicability":"pending; no HTTP/1 parity inferred from loopback-only tests",
+  "binary_observation_policy":"base64 preserves bytes but is NOT redaction; capture only known synthetic credentials and fixture content"
+}

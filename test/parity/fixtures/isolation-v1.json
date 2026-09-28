@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"isolation-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,
+  "required_checks":["credential_scoped_sessions","no_cross_account_reuse","no_client_secret_forwarded","revocation_effective","restart_preserves_scope"],
+  "driver_kind":"scenario","accounts":["synthetic-a","synthetic-b"],"sessions":["same-session-label","same-session-label"],
+  "steps":["concurrent_requests","revoke_a","retry_a","retry_b","restart"]
+}

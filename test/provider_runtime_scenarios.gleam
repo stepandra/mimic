@@ -1,0 +1,65 @@
+import gleam/io
+import provider_runtime_test as lifecycle
+import provider_runtime_tls_test as tls
+import provider_runtime_v3_test as binary
+import provider_runtime_v4_test as refresh
+
+/// Runnable offline acceptance scenarios, not assembled-ingress parity proof.
+/// All accounts and endpoints are synthetic; TLS listeners bind 127.0.0.1.
+pub fn main() {
+  lifecycle.expired_token_request_path_singleflight_and_metadata_restart_test()
+  lifecycle.quota_failover_is_bounded_and_survives_restart_test()
+  lifecycle.mixed_store_and_material_mismatch_fail_before_adapter_test()
+  lifecycle.failed_refresh_persistence_never_returns_new_token_test()
+  lifecycle.changed_private_identity_never_activates_rotated_token_test()
+  lifecycle.ownership_rejects_second_vm_alias_and_stale_guard_test()
+  lifecycle.cancellation_and_callback_panic_release_once_test()
+  lifecycle.stream_adoption_revokes_old_owner_and_survives_its_death_test()
+  lifecycle.adopted_owner_death_releases_stream_test()
+  lifecycle.cancelled_and_dead_owner_streams_cannot_be_adopted_test()
+  lifecycle.concurrent_admin_replacement_and_deletion_win_over_refresh_test()
+  lifecycle.fresh_vm_restores_rotated_credentials_identity_and_cooldown_test()
+  lifecycle.stopping_mutation_caller_cannot_strand_credential_guard_test()
+  tls.two_tls_accounts_quota_failover_and_credentials_stay_isolated_test()
+  tls.tls_cancellation_closes_socket_and_does_not_retry_test()
+  tls.truncated_tls_stream_is_started_and_never_replayed_test()
+  tls.tls_trust_and_hostname_are_verified_before_request_bytes_test()
+  tls.transport_rejects_adapter_origin_override_before_send_test()
+  tls.transport_rejects_host_override_duplicate_and_missing_before_send_test()
+  binary.binary_request_response_invalid_utf8_is_byte_identical_test()
+  binary.unary_proto_is_explicit_and_not_json_decoded_test()
+  binary.legacy_capture_path_rejects_binary_media_and_invalid_utf8_test()
+  binary.binary_protocol_and_unqualified_origin_gates_are_explicit_test()
+  binary.binary_request_byte_caps_and_framing_fail_before_send_test()
+  binary.binary_response_media_encoding_and_size_caps_fail_closed_test()
+  binary.binary_redirect_is_returned_without_forwarding_credentials_test()
+  binary.static_session_never_refreshes_and_delete_prevents_next_use_test()
+  binary.session_token_cas_replacement_delete_and_record_compatibility_test()
+  binary.session_token_restores_in_fresh_vm_without_expiry_or_reseed_test()
+  binary.binary_tls_failover_isolates_session_bodies_and_cancel_closes_test()
+  binary.binary_tls_certificate_verification_and_started_no_replay_test()
+  binary.binary_plan_exception_diagnostics_do_not_expose_body_token_test()
+  binary.binary_chunked_exact_cap_and_cumulative_overflow_test()
+  binary.empty_binary_response_media_policy_is_explicit_test()
+  binary.session_bounds_kind_matrix_and_metadata_only_cas_test()
+  binary.binary_secret_head_read_and_callback_errors_are_not_logged_test()
+  refresh.concurrent_json_429_singleflight_and_completion_epoch_boundary_test()
+  refresh.forward_wall_jump_cannot_defeat_in_process_monotonic_gate_test()
+  refresh.rollback_during_exchange_floors_deadline_and_restart_restores_deferral_test()
+  refresh.invalid_grant_and_unsupported_latch_across_restart_and_reads_test()
+  refresh.same_token_save_clears_deferred_gate_and_old_snapshot_cannot_complete_test()
+  refresh.blocked_callback_loses_to_same_token_save_or_delete_for_terminal_and_429_test()
+  refresh.prearm_failure_skips_callback_and_completion_failure_keeps_restart_fence_test()
+  refresh.killed_during_refresh_keeps_recovery_fence_on_restart_test()
+  refresh.panic_and_malformed_success_latch_without_repeating_after_restart_test()
+  refresh.delay_fallback_unclamped_positive_and_overflow_latch_test()
+  refresh.negative_delay_and_uncertain_refresh_latch_retryable_uses_fallback_test()
+  refresh.invalid_clock_and_monotonic_overflow_fail_closed_test()
+  refresh.v1_read_is_ready_and_static_policies_never_sample_clock_test()
+  refresh.runtime_failover_for_unpinned_and_typed_pinned_errors_test()
+  refresh.runtime_later_uncertain_or_started_failure_beats_earlier_retry_after_test()
+  refresh.fresh_vm_preserves_latch_and_deferral_without_reseeding_test()
+  io.println(
+    "{\"scope\":\"runtime_library\",\"synthetic\":true,\"scenarios_passed\":52,\"assembled_ingress\":false,\"live_provider_calls\":false}",
+  )
+}

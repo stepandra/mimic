@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"id":"devin-auth-import-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":true,"driver_kind":"scenario",
+  "required_checks":["manual_import_no_code_exchange","session_token_prefix_once","permanent_token_not_rotating_oauth","persisted_token_no_reseed","real_ingress_uses_imported_token"],
+  "acquisition_mode":"manual_import","token_lifetime":"permanent","synthetic_token":"devin-session-token$synthetic-import",
+  "steps":["import_fixture_token","invoke_messages_route","restart_without_reseeding","invoke_messages_route"],
+  "privacy":"Never import an operator token. This tests explicit synthetic acquisition, not an API-key backend or rotating refresh-token flow."
+}

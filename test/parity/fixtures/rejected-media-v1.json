@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"id":"rejected-media-v1","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,
+  "required_checks":["explicit_4xx","no_silent_loss","zero_upstream_requests","source_applicability_reviewed"],
+  "driver_kind":"scenario","forms":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"%%%invalid-base64%%%"}},{"type":"synthetic_unknown_binary","data":"AA=="}],
+  "note":"Required rejection of malformed/unknown forms, not a blanket claim that audio/video are unsupported by CPA."
+}

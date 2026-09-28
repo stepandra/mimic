@@ -1,0 +1,9 @@
+{
+  "schema_version":1,"id":"devin-multimodal-v2","cpa_revision":"acdace936fa7df2905500c7f5e0a97d683138dea","provenance":"synthetic","restart":false,"driver_kind":"scenario",
+  "required_checks":["inline_image_bytes_preserved","image_mime_preserved","content_order_preserved","cpa_omission_recorded","mimic_explicit_rejection","intentional_difference_not_reported_as_parity"],
+  "path":"/v1/messages",
+  "inline_image":{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII="}},
+  "unsupported_form_probes":["remote_image_url_without_network_fetch","audio_input","malformed_base64"],
+  "expected_unsupported_behavior":"Pinned CPA extractDevinImage and extractInteractionsStepContent silently omit remote image/audio parts without text; MIMIC must reject unsupported forms per project rules. This intentional difference remains a strict differential blocker, not passing parity.",
+  "source":"https://github.com/router-for-me/CLIProxyAPI/blob/acdace936fa7df2905500c7f5e0a97d683138dea/internal/runtime/executor/devin_executor.go#L1749-L1805"
+}
