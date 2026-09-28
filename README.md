@@ -84,7 +84,11 @@ Provider integration and its current limitations are tracked separately in
 [docs/PROVIDER_INTEGRATION.md](docs/PROVIDER_INTEGRATION.md). Historical
 per-thread test totals must not be added together or presented as one build.
 The [combined validation report](docs/INTEGRATION_VALIDATION.md) records the
-assembled 463-test gate, CLI/shipment workflows and remaining conformance gaps.
+assembled CLI/shipment workflows and remaining conformance gaps. The newer
+[HTTP/WS validation report](docs/HTTP_PROVIDER_VALIDATION.md) records the
+Claude/Kimi integration and opt-in Codex WebSocket checks.
+The [merge-destination validation](docs/HTTP_WS_MERGE_VALIDATION.md) records
+the final combined gate run before publication.
 
 ## Provider gateway
 
@@ -103,6 +107,14 @@ Keep the state directory private, provision credentials separately from the
 secret-free configuration, and supply only endpoints you own or are authorized
 to use. Never put tokens in command arguments, checked-in configuration, logs
 or conformance reports.
+
+Native gateway modes include Claude Messages/SSE with API keys or configured
+OAuth, and Kimi text Responses JSON/SSE and buffered Chat with API keys or
+configured device OAuth. Codex WebSocket is an explicit opt-in:
+`codex_websocket` defaults to `false`. Only configured Codex models receive
+that capability; this does not enable WebSocket for every provider.
+See [the HTTP provider example](examples/providers-http.synthetic.json) and
+[the capability/configuration guide](docs/PROVIDER_INTEGRATION.md).
 
 The assembled code includes the shared Responses protocol, provider runtime,
 and provider-specific adapters. **Inclusion is not a claim of CPA parity.**

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "state_dir": "/absolute/private/mimic-http-state",
+  "listen_port": 8787,
+  "accounts": [
+    {
+      "provider": "claude",
+      "auth_mode": "oauth",
+      "id": "synthetic-claude",
+      "origin": "http://127.0.0.1:18080",
+      "models": ["synthetic-claude"],
+      "oauth": {
+        "client_id": "synthetic-client",
+        "authorize_url": "http://127.0.0.1:18081/authorize",
+        "token_url": "http://127.0.0.1:18081/token",
+        "redirect_uri": "http://127.0.0.1:18082/callback"
+      }
+    },
+    {
+      "provider": "kimi",
+      "auth_mode": "oauth",
+      "id": "synthetic-kimi",
+      "origin": "http://127.0.0.1:18083",
+      "base_path": "/coding",
+      "models": ["kimi-k2.7-code"],
+      "oauth": {
+        "domain": "kimi.com",
+        "device_url": "http://127.0.0.1:18084/api/oauth/device_authorization",
+        "token_url": "http://127.0.0.1:18084/api/oauth/token"
+      }
+    }
+  ]
+}

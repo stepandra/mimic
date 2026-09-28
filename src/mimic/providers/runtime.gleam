@@ -83,16 +83,41 @@ pub opaque type Stream {
   Stream(subject: process.Subject(GuardMessage), pid: process.Pid)
 }
 
+/// No pooling: this capability owns one connection, lease and credential
+/// generation. A replacement connection requires a new session and receipt.
+pub opaque type Session {
+  Session(stream: Stream, account: String)
+}
+
+type Read {
+  Chunk(BitArray)
+  Idle
+  End
+}
+
+type Driver(h) {
+  Driver(
+    open: fn(contracts.Context, Request) -> Result(contracts.Opened(h), Failure),
+    next: fn(h) -> Result(#(Read, h), Failure),
+    send: Option(fn(h, Request) -> Result(h, Failure)),
+    cancel: fn(h) -> Nil,
+    rejection: fn(Int, List(Header)) -> Option(Failure),
+  )
+}
+
 type StreamMessage {
-  Pull(process.Subject(Result(Option(BitArray), Failure)))
+  Pull(process.Subject(Result(Read, Failure)))
+  Send(Request, process.Subject(Result(Nil, Failure)))
   Cancel(process.Subject(Result(Nil, Failure)))
 }
 
 type GuardMessage {
-  PullFor(process.Pid, process.Subject(Result(Option(BitArray), Failure)))
+  PullFor(process.Pid, process.Subject(Result(Read, Failure)))
+  SendFor(process.Pid, Request, process.Subject(Result(Nil, Failure)))
   CancelFor(process.Pid, process.Subject(Result(Nil, Failure)))
   Adopt(process.Pid, process.Subject(Result(Nil, Failure)))
-  Pulled(Result(Option(BitArray), Failure))
+  Pulled(Result(Read, Failure))
+  Sent(Result(Nil, Failure))
   Closed(Result(Nil, Failure))
   CancelTimeout
   GuardDown(process.Down)
@@ -107,9 +132,11 @@ type GuardState {
     runtime_monitor: process.Monitor,
     subject: process.Subject(GuardMessage),
     execution_subject: process.Subject(StreamMessage),
-    pull_reply: process.Subject(Result(Option(BitArray), Failure)),
+    pull_reply: process.Subject(Result(Read, Failure)),
+    send_reply: process.Subject(Result(Nil, Failure)),
     cancel_reply: process.Subject(Result(Nil, Failure)),
-    pending: Option(process.Subject(Result(Option(BitArray), Failure))),
+    pending: Option(process.Subject(Result(Read, Failure))),
+    sending: Option(process.Subject(Result(Nil, Failure))),
     cancelling: Option(process.Subject(Result(Nil, Failure))),
     revoked: List(process.Pid),
   )
@@ -359,6 +386,112 @@ pub fn open(
   adapter: Adapter(h),
   request: Request,
 ) -> Result(Response, Failure) {
+  open_driver(
+    runtime,
+    Driver(
+      adapter.open,
+      fn(handle) {
+        adapter.next(handle)
+        |> result.map(fn(value) {
+          case value {
+            Some(#(bytes, next)) -> #(Chunk(bytes), next)
+            None -> #(End, handle)
+          }
+        })
+      },
+      None,
+      adapter.cancel,
+      adapter.rejection,
+    ),
+    request,
+  )
+}
+
+pub fn open_session(
+  runtime: Runtime,
+  adapter: contracts.SessionAdapter(h),
+  request: Request,
+) -> Result(Session, Failure) {
+  use _ <- result.try(
+    case list.contains(request.required, contracts.WebSocket) {
+      True -> Ok(Nil)
+      False -> Error(Failure(contracts.Unsupported, NotSent, None))
+    },
+  )
+  use response <- result.try(open_driver(
+    runtime,
+    Driver(
+      adapter.open,
+      fn(handle) {
+        adapter.receive(handle)
+        |> result.map(fn(pair) {
+          #(
+            case pair.0 {
+              None -> Idle
+              Some(text) -> Chunk(bit_array.from_string(text))
+            },
+            pair.1,
+          )
+        })
+      },
+      Some(adapter.send),
+      adapter.cancel,
+      fn(_, _) { None },
+    ),
+    request,
+  ))
+  Ok(Session(response.stream, response.account))
+}
+
+pub fn session_account(session: Session) -> String {
+  session.account
+}
+
+pub fn session_adopt(session: Session) -> Result(Nil, Failure) {
+  adopt(session.stream)
+}
+
+pub fn session_cancel(session: Session) -> Nil {
+  cancel(session.stream)
+}
+
+pub fn session_send(
+  session: Session,
+  request: Request,
+) -> Result(Nil, Failure) {
+  let answer =
+    ask(
+      session.stream.subject,
+      session.stream.pid,
+      fn(reply) { SendFor(process.self(), request, reply) },
+      10_000,
+    )
+  case answer {
+    Error(_) -> {
+      cancel(session.stream)
+      answer
+    }
+    Ok(_) -> answer
+  }
+}
+
+pub fn session_poll(session: Session) -> Result(Option(String), Failure) {
+  use read <- result.try(read(session.stream))
+  case read {
+    Idle -> Ok(None)
+    Chunk(bytes) ->
+      bit_array.to_string(bytes)
+      |> result.map(Some)
+      |> result.replace_error(Failure(InvalidResponse, Started, None))
+    End -> Error(Failure(Cancelled, Started, None))
+  }
+}
+
+fn open_driver(
+  runtime: Runtime,
+  adapter: Driver(h),
+  request: Request,
+) -> Result(Response, Failure) {
   use _ <- result.try(registry.resolve(runtime.registry, request))
   let reply = process.new_subject()
   let owner = process.self()
@@ -378,7 +511,7 @@ pub fn open(
           let selector = process.new_selector() |> process.select(subject)
           case attempt(runtime, adapter, request, []) {
             Error(error) -> process.send(reply, Error(error))
-            Ok(#(lease, opened)) -> {
+            Ok(#(lease, opened, material)) -> {
               process.send(
                 reply,
                 Ok(Response(
@@ -388,7 +521,15 @@ pub fn open(
                   Stream(guard_subject, guard),
                 )),
               )
-              stream_loop(runtime, adapter, lease, opened.handle, selector)
+              stream_loop(
+                runtime,
+                adapter,
+                lease,
+                opened.handle,
+                selector,
+                Request(..request, body: ""),
+                material,
+              )
             }
           }
         })
@@ -421,6 +562,7 @@ fn guard_execution(
 ) -> Nil {
   let subject = process.new_subject()
   let pull_reply = process.new_subject()
+  let send_reply = process.new_subject()
   let cancel_reply = process.new_subject()
   let execution_monitor = process.monitor(execution)
   let owner_monitor = process.monitor(owner)
@@ -429,6 +571,7 @@ fn guard_execution(
     process.new_selector()
     |> process.select(subject)
     |> process.select_map(pull_reply, Pulled)
+    |> process.select_map(send_reply, Sent)
     |> process.select_map(cancel_reply, Closed)
     |> process.select_monitors(GuardDown)
   process.send(ready, subject)
@@ -442,7 +585,9 @@ fn guard_execution(
       subject,
       execution_subject,
       pull_reply,
+      send_reply,
       cancel_reply,
+      None,
       None,
       None,
       [],
@@ -459,6 +604,7 @@ fn guard_loop(
     Adopt(owner, reply) -> {
       case
         state.pending == None
+        && state.sending == None
         && state.cancelling == None
         && !list.contains(state.revoked, owner)
         && process.is_alive(state.owner)
@@ -491,6 +637,7 @@ fn guard_loop(
       case
         owner == state.owner
         && state.pending == None
+        && state.sending == None
         && state.cancelling == None
       {
         True -> {
@@ -502,6 +649,30 @@ fn guard_loop(
           guard_loop(state, selector)
         }
       }
+    }
+    SendFor(owner, request, reply) -> {
+      case
+        owner == state.owner
+        && state.pending == None
+        && state.sending == None
+        && state.cancelling == None
+      {
+        True -> {
+          process.send(state.execution_subject, Send(request, state.send_reply))
+          guard_loop(GuardState(..state, sending: Some(reply)), selector)
+        }
+        False -> {
+          process.send(reply, Error(Failure(Cancelled, Started, None)))
+          guard_loop(state, selector)
+        }
+      }
+    }
+    Sent(answer) -> {
+      case state.sending {
+        Some(reply) -> process.send(reply, answer)
+        None -> Nil
+      }
+      guard_loop(GuardState(..state, sending: None), selector)
     }
     CancelFor(owner, reply) -> {
       case owner == state.owner && state.cancelling == None {
@@ -551,10 +722,10 @@ fn guard_loop(
 
 fn attempt(
   runtime: Runtime,
-  adapter: Adapter(h),
+  adapter: Driver(h),
   request: Request,
   excluded: List(String),
-) -> Result(#(Lease, contracts.Opened(h)), Failure) {
+) -> Result(#(Lease, contracts.Opened(h), contracts.AuthMaterial), Failure) {
   use lease <- result.try(ask(
     runtime.subject,
     runtime.pid,
@@ -578,10 +749,11 @@ fn attempt(
       ),
       request,
     )
+    |> result.map(fn(opened) { #(opened, material) })
   }
   let outcome = case outcome {
     Error(error) -> Error(error)
-    Ok(opened) -> {
+    Ok(#(opened, material)) -> {
       let rejection = adapter.rejection(opened.status, opened.headers)
       let retry = case rejection {
         Some(error) -> error.retry_after_ms
@@ -607,13 +779,13 @@ fn attempt(
               adapter.cancel(opened.handle)
               Error(error)
             }
-            None -> Ok(opened)
+            None -> Ok(#(opened, material))
           }
       }
     }
   }
   case outcome {
-    Ok(opened) -> Ok(#(lease, opened))
+    Ok(#(opened, material)) -> Ok(#(lease, opened, material))
     Error(error) -> {
       let _ = release_lease(runtime, lease)
       case retryable(error) && request.pinned_account == None {
@@ -671,22 +843,32 @@ fn release_lease(runtime: Runtime, lease: Lease) -> Result(Nil, Failure) {
 
 fn stream_loop(
   runtime: Runtime,
-  adapter: Adapter(h),
+  adapter: Driver(h),
   lease: Lease,
   handle: h,
   selector: process.Selector(StreamMessage),
+  request: Request,
+  material: contracts.AuthMaterial,
 ) -> Nil {
   case process.selector_receive(selector, 60_000) {
     Ok(Pull(reply)) ->
       case adapter.next(handle) {
-        Ok(Some(#(chunk, next))) -> {
-          process.send(reply, Ok(Some(chunk)))
-          stream_loop(runtime, adapter, lease, next, selector)
+        Ok(#(read, next)) if read != End -> {
+          process.send(reply, Ok(read))
+          stream_loop(
+            runtime,
+            adapter,
+            lease,
+            next,
+            selector,
+            request,
+            material,
+          )
         }
-        Ok(None) -> {
+        Ok(_) -> {
           adapter.cancel(handle)
           let _ = release_lease(runtime, lease)
-          process.send(reply, Ok(None))
+          process.send(reply, Ok(End))
         }
         Error(error) -> {
           adapter.cancel(handle)
@@ -694,6 +876,46 @@ fn stream_loop(
           process.send(reply, Error(Failure(..error, delivery: Started)))
         }
       }
+    Ok(Send(next_request, reply)) -> {
+      let outcome = {
+        use send <- result.try(case adapter.send {
+          Some(send) -> Ok(send)
+          None -> Error(Failure(contracts.Unsupported, Started, None))
+        })
+        use _ <- result.try(case same_session(request, next_request, lease) {
+          True -> Ok(Nil)
+          False -> Error(Failure(InvalidConfiguration, Started, None))
+        })
+        use _ <- result.try(registry.resolve(runtime.registry, next_request))
+        // Re-read through the durable credential worker before every turn.
+        // Rotation/deletion/refresh never silently re-authenticates a socket.
+        use current <- result.try(credentials.acquire(lease.bound.worker))
+        use _ <- result.try(case current == material {
+          True -> Ok(Nil)
+          False -> Error(Failure(CredentialUnavailable, Started, None))
+        })
+        send(handle, next_request)
+      }
+      case outcome {
+        Ok(next) -> {
+          process.send(reply, Ok(Nil))
+          stream_loop(
+            runtime,
+            adapter,
+            lease,
+            next,
+            selector,
+            request,
+            material,
+          )
+        }
+        Error(error) -> {
+          adapter.cancel(handle)
+          let _ = release_lease(runtime, lease)
+          process.send(reply, Error(Failure(..error, delivery: Started)))
+        }
+      }
+    }
     Ok(Cancel(reply)) -> {
       adapter.cancel(handle)
       let _ = release_lease(runtime, lease)
@@ -707,7 +929,31 @@ fn stream_loop(
   }
 }
 
+fn same_session(original: Request, next: Request, lease: Lease) -> Bool {
+  original.provider == next.provider
+  && original.auth_mode == next.auth_mode
+  && original.model == next.model
+  && original.protocol == next.protocol
+  && original.operation == next.operation
+  && original.mode == next.mode
+  && original.session == next.session
+  && list.contains(next.required, contracts.WebSocket)
+  && case next.pinned_account {
+    None -> True
+    Some(id) -> id == lease.bound.account.id
+  }
+}
+
 pub fn next(stream: Stream) -> Result(Option(BitArray), Failure) {
+  use value <- result.try(read(stream))
+  case value {
+    Chunk(bytes) -> Ok(Some(bytes))
+    End -> Ok(None)
+    Idle -> Error(Failure(InvalidResponse, Started, None))
+  }
+}
+
+fn read(stream: Stream) -> Result(Read, Failure) {
   let answer =
     ask(
       stream.subject,

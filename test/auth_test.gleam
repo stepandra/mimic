@@ -184,6 +184,36 @@ pub fn refresh_backoff_test() {
   worker.backoff(100) |> should.equal(300_000)
 }
 
+pub fn callback_only_timeout_rejects_duplicates_and_closes_listener_test() {
+  let port = free_port()
+  let origin = "http://127.0.0.1:" <> int.to_string(port)
+  let cfg = auth.Config(..config(1), redirect_uri: origin <> "/callback")
+  let assert Ok(login) = auth.begin_login(cfg, "synthetic")
+  let seen = process.new_subject()
+  auth.await_callback(cfg, login, 500, fn(_) {
+    let assert Ok(duplicate) =
+      request.to(
+        origin
+        <> "/callback?state="
+        <> login.state
+        <> "&state="
+        <> login.state
+        <> "&code=synthetic",
+      )
+    let assert Ok(wrong) =
+      request.to(origin <> "/callback?state=wrong&code=synthetic")
+    let assert Ok(a) = httpc.send(duplicate)
+    let assert Ok(b) = httpc.send(wrong)
+    process.send(seen, #(a.status, b.status))
+  })
+  |> should.equal(Error("OAuth callback timed out"))
+  process.receive(seen, 1000) |> should.equal(Ok(#(400, 400)))
+  // Token endpoint is unreachable; callback-only never invokes transport.
+  process.sleep(20)
+  let assert Ok(closed) = request.to(origin <> "/callback")
+  httpc.send(closed) |> should.be_error
+}
+
 pub fn loopback_callback_state_path_and_token_exchange_test() {
   let token_port = process.new_subject()
   let token_request = process.new_subject()

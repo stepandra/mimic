@@ -106,6 +106,18 @@ pub type Adapter(handle) {
   )
 }
 
+/// A connection remains leased to one authenticated client/model until closed.
+/// Open performs only the handshake; send is never retried, even before output.
+/// Receive is a bounded poll: None is idle, not EOF. EOF is an error.
+pub type SessionAdapter(handle) {
+  SessionAdapter(
+    open: fn(Context, Request) -> Result(Opened(handle), Failure),
+    send: fn(handle, Request) -> Result(handle, Failure),
+    receive: fn(handle) -> Result(#(Option(String), handle), Failure),
+    cancel: fn(handle) -> Nil,
+  )
+}
+
 pub type RefreshFailure {
   InvalidGrant
   /// A recognized provider rejection, not merely an error-looking body.

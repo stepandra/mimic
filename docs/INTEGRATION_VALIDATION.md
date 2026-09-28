@@ -1,5 +1,26 @@
 # Combined application validation
 
+## HTTP providers and opt-in WebSocket follow-up
+
+The integration on published base
+`f809b8c8a51939383792e6e88d5eb4f98b7ddcc2` now includes native Kimi
+API-key/OAuth Chat/Responses, Claude Messages SSE/OAuth with configured login
+and refresh, the frozen peer Codex WS implementation, and a checksum-pinned
+Mist 6.0.3 parser patch. The complete expanded
+`mise exec gleam@1.18.1 -- sh scripts/verify-integration.sh` exited **0**:
+**522 Gleam tests**, **10 Python tests**, strict raw WS handshake tests,
+all existing scenarios, actual root HTTP/WS CLI workflows, and both exported
+shipment workflows passed.
+
+See [HTTP_PROVIDER_VALIDATION.md](HTTP_PROVIDER_VALIDATION.md) for exact scope,
+log hashes, the first failed 520/1 integration run and its test-only correction,
+frozen input provenance and remaining gaps. This follow-up is local synthetic
+evidence, not a new GitHub CI result, live compatibility or CPA certification.
+The strict 37-row release gate was rerun independently: **exit 1, 0/37**, with
+no live evidence. Missing required cases remain red.
+
+## Historical published-base validation
+
 This is evidence from the assembled worktree, not a sum of isolated handoffs.
 The tested implementation includes runtime v4, Responses v2, Codex v4,
 corrected Claude OAuth parsing, the xAI integration, the experimental Devin
@@ -94,4 +115,6 @@ features are listed in [PROVIDER_INTEGRATION.md](PROVIDER_INTEGRATION.md).
 
 The publication is an integrated development snapshot, **not a certification
 of full CPA parity**, native-client compatibility, performance, or live OAuth.
-Gemini, Antigravity and Copilot remain excluded. Kimi is not registered.
+Gemini, Antigravity and Copilot remain excluded. Kimi was not registered in
+this historical baseline; its newer bounded native integration is documented
+in the follow-up above.

@@ -23,7 +23,10 @@ chmod 700 "$codex_state"
 "$GLEAM" run -m mimic/providers/codex/local -- "$codex_state"
 "$GLEAM" run -m responses_scenario
 "$GLEAM" run -m devin_scenarios
+"$GLEAM" run -m gateway_websocket_test -- --strict
 GLEAM="$GLEAM" python3 scripts/smoke-gateway.py
+GLEAM="$GLEAM" python3 scripts/smoke-http-providers.py
+GLEAM="$GLEAM" python3 scripts/smoke-provider-websocket.py
 
 # Keep each VM separate; restoration must not reseed credentials.
 mkdir -p build/integration
@@ -34,4 +37,6 @@ chmod 700 "$state"
 
 "$GLEAM" export erlang-shipment
 python3 scripts/smoke-gateway.py --shipment build/erlang-shipment
+python3 scripts/smoke-http-providers.py --shipment build/erlang-shipment
+python3 scripts/smoke-provider-websocket.py --shipment build/erlang-shipment
 printf '%s\n' 'Local integration checks passed. CPA differential/live gates were not run.'

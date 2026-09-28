@@ -3,15 +3,19 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gleam/uri
+import mimic/auth
 import mimic/auth/runtime as credential
 import mimic/fleet
 import mimic/gateway/refresh
 import mimic/ir
+import mimic/providers/claude/adapter as claude_adapter
 import mimic/providers/claude/json_guard as strict_json
 import mimic/providers/codex/adapter as codex_adapter
 import mimic/providers/codex/models
 import mimic/providers/codex/oauth as codex_oauth
 import mimic/providers/contracts
+import mimic/providers/kimi/models as kimi_models
+import mimic/providers/kimi/oauth as kimi_oauth
 import mimic/providers/runtime
 import mimic/providers/xai/models as xai_models
 
@@ -23,6 +27,7 @@ pub type Config {
     accounts: List(Account),
     codex_catalog: Option(models.Catalog),
     codex_user_agent: String,
+    codex_websocket: Bool,
   )
 }
 
@@ -34,8 +39,15 @@ pub type Account {
     origin: String,
     models: List(String),
     egress: fleet.Egress,
-    oauth: Option(codex_oauth.Config),
+    oauth: Option(OAuthConfig),
+    base_path: String,
   )
+}
+
+pub type OAuthConfig {
+  CodexOAuth(codex_oauth.Config)
+  ClaudeOAuth(auth.Config)
+  KimiOAuth(kimi_oauth.Config)
 }
 
 /// Configuration is secret-free. A configured model must have explicit codec
@@ -64,6 +76,9 @@ pub fn decode(source: String) -> Result(Config, String) {
     Some(ir.String(value)) -> value
     _ -> "mimic-codex/0.1"
   }
+  use websocket <- result.try(
+    ir.optional_bool(value, "codex_websocket", False) |> safe,
+  )
   use _ <- result.try(
     case
       version == 1
@@ -87,6 +102,13 @@ pub fn decode(source: String) -> Result(Config, String) {
         })
       })
       && safe_header(agent)
+      && {
+        !websocket
+        || {
+          catalog != None
+          && list.any(accounts, fn(account) { account.provider == "codex" })
+        }
+      }
     {
       True -> Ok(Nil)
       False -> Error("invalid gateway configuration")
@@ -96,10 +118,24 @@ pub fn decode(source: String) -> Result(Config, String) {
     list.try_each(accounts, fn(a) {
       case a.provider, a.auth_mode, catalog {
         "claude", "api_key", _ -> Ok(Nil)
+        "claude", "oauth", _ ->
+          case a.oauth {
+            Some(ClaudeOAuth(_)) -> Ok(Nil)
+            _ -> Error("Claude OAuth requires explicit endpoints")
+          }
         "xai", "api_key", _ ->
           list.try_each(a.models, fn(model) {
             xai_models.registration(model) |> safe |> result.map(fn(_) { Nil })
           })
+        "kimi", "api_key", _ | "kimi", "oauth", _ -> {
+          use _ <- result.try(case a.auth_mode, a.oauth {
+            "oauth", Some(KimiOAuth(_)) | "api_key", _ -> Ok(Nil)
+            _, _ -> Error("Kimi OAuth requires explicit endpoints")
+          })
+          list.try_each(a.models, fn(model) {
+            kimi_models.registration(model) |> safe |> result.map(fn(_) { Nil })
+          })
+        }
         "devin", "session_token", _ if a.models == ["devin/swe-1-7"] -> Ok(Nil)
         "codex", "oauth", Some(catalog) ->
           list.try_each(a.models, fn(model) {
@@ -114,7 +150,7 @@ pub fn decode(source: String) -> Result(Config, String) {
       }
     }),
   )
-  Ok(Config(version, state_dir, port, accounts, catalog, agent))
+  Ok(Config(version, state_dir, port, accounts, catalog, agent, websocket))
 }
 
 fn account(value: ir.Value) -> Result(Account, String) {
@@ -130,17 +166,29 @@ fn account(value: ir.Value) -> Result(Account, String) {
   )
   use oauth <- result.try(case ir.field(value, "oauth") {
     None -> Ok(None)
-    Some(raw) -> {
-      use authorize <- result.try(ir.string_field(raw, "authorize_url") |> safe)
-      use token <- result.try(ir.string_field(raw, "token_url") |> safe)
-      use redirect <- result.try(ir.string_field(raw, "redirect_uri") |> safe)
-      let settings = codex_oauth.Config(authorize, token, redirect)
-      use _ <- result.try(
-        codex_oauth.refresh_request(settings, "synthetic-validation") |> safe,
-      )
-      use _ <- result.try(refresh.validate(token))
-      Ok(Some(settings))
+    Some(raw) -> decode_oauth(provider, raw) |> result.map(Some)
+  })
+  use base_path <- result.try(case provider, ir.field(value, "base_path") {
+    "kimi", None -> Ok("/coding")
+    "kimi", Some(ir.String(path)) -> {
+      case
+        { path == "" || string.starts_with(path, "/") }
+        && !string.ends_with(path, "/")
+        && !string.contains(path, "..")
+        && !string.contains(path, "//")
+        && !string.contains(path, "?")
+        && !string.contains(path, "#")
+        && !string.contains(path, "%")
+        && !string.contains(path, "\\")
+        && !string.contains(path, " ")
+        && safe_header(path)
+      {
+        True -> Ok(path)
+        False -> Error("invalid Kimi base path")
+      }
     }
+    _, None -> Ok("")
+    _, _ -> Error("base_path is only supported for Kimi")
   })
   use parsed <- result.try(uri.parse(origin) |> safe)
   let egress = case parsed.scheme, parsed.host {
@@ -176,7 +224,7 @@ fn account(value: ir.Value) -> Result(Account, String) {
       && !list.is_empty(models)
       && list.all(models, fn(m) { m != "" && safe_header(m) })
       && list.length(list.unique(models)) == list.length(models)
-      && { oauth == None || { provider == "codex" && auth_mode == "oauth" } }
+      && { oauth == None || auth_mode == "oauth" }
     {
       True -> Ok(Nil)
       False -> Error("invalid gateway account")
@@ -191,7 +239,55 @@ fn account(value: ir.Value) -> Result(Account, String) {
     ))
     |> safe,
   )
-  Ok(Account(provider, auth_mode, id, origin, models, egress, oauth))
+  Ok(Account(provider, auth_mode, id, origin, models, egress, oauth, base_path))
+}
+
+fn decode_oauth(
+  provider: String,
+  raw: ir.Value,
+) -> Result(OAuthConfig, String) {
+  case provider {
+    "kimi" -> {
+      use domain <- result.try(ir.string_field(raw, "domain") |> safe)
+      use device <- result.try(ir.string_field(raw, "device_url") |> safe)
+      use token <- result.try(ir.string_field(raw, "token_url") |> safe)
+      use _ <- result.try(refresh.validate(device))
+      use _ <- result.try(refresh.validate(token))
+      let settings = kimi_oauth.Config(domain, device, token, "")
+      use _ <- result.try(kimi_oauth.validate_endpoints(settings) |> safe)
+      Ok(KimiOAuth(settings))
+    }
+    _ -> decode_pkce_oauth(provider, raw)
+  }
+}
+
+fn decode_pkce_oauth(
+  provider: String,
+  raw: ir.Value,
+) -> Result(OAuthConfig, String) {
+  use authorize <- result.try(ir.string_field(raw, "authorize_url") |> safe)
+  use token <- result.try(ir.string_field(raw, "token_url") |> safe)
+  use redirect <- result.try(ir.string_field(raw, "redirect_uri") |> safe)
+  use _ <- result.try(refresh.validate(token))
+  case provider {
+    "codex" -> {
+      let settings = codex_oauth.Config(authorize, token, redirect)
+      use _ <- result.try(
+        codex_oauth.refresh_request(settings, "synthetic-validation") |> safe,
+      )
+      Ok(CodexOAuth(settings))
+    }
+    "claude" -> {
+      use client <- result.try(ir.string_field(raw, "client_id") |> safe)
+      use _ <- result.try(refresh.validate(authorize))
+      let settings = auth.claude_config(client, authorize, token, redirect)
+      use _ <- result.try(
+        auth.begin_login(settings, "configuration-check") |> safe,
+      )
+      Ok(ClaudeOAuth(settings))
+    }
+    _ -> Error("unsupported OAuth provider")
+  }
 }
 
 fn safe_header(s: String) -> Bool {
@@ -219,11 +315,18 @@ pub fn runtime_accounts(config: Config) -> List(runtime.Account) {
       64,
       a.models,
       case a.provider, a.oauth {
-        "codex", Some(settings) ->
+        "codex", Some(CodexOAuth(settings)) ->
           credential.Refreshable(
             codex_adapter.refresh(settings, fn(plan) { refresh.send(plan) }),
           )
-        "codex", None ->
+        "claude", Some(ClaudeOAuth(settings)) ->
+          credential.Refreshable(claude_adapter.refresher(
+            settings,
+            refresh.claude,
+          ))
+        "kimi", Some(KimiOAuth(settings)) ->
+          credential.Refreshable(kimi_oauth.refresher(settings, refresh.kimi))
+        "codex", _ ->
           credential.Refreshable(
             contracts.Refresh(fn(_, _) { Error(contracts.RefreshUnsupported) }),
           )

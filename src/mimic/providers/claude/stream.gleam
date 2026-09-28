@@ -6,6 +6,7 @@ import gleam/result
 import gleam/string
 import mimic/dialect
 import mimic/ir
+import mimic/providers/claude/json_guard
 
 pub type ErrorKind {
   Authentication
@@ -34,7 +35,12 @@ pub type Usage {
 }
 
 pub opaque type State {
-  State(parser: dialect.Stream, status: Status, usage: Usage)
+  State(
+    parser: dialect.Stream,
+    status: Status,
+    usage: Usage,
+    buffered_bytes: Int,
+  )
 }
 
 pub fn new() -> State {
@@ -42,6 +48,7 @@ pub fn new() -> State {
     dialect.new_stream(dialect.Anthropic, dialect.Anthropic),
     Awaiting,
     Usage(None, None, None, None),
+    0,
   )
 }
 
@@ -69,15 +76,12 @@ fn feed_active(
   state: State,
   chunk: String,
 ) -> Result(#(State, List(String)), String) {
-  let buffered =
-    string.byte_size(state.parser.pending_line)
-    + list.fold(state.parser.lines, 0, fn(n, line) {
-      n + string.byte_size(line) + 1
-    })
-  use _ <- result.try(case buffered + string.byte_size(chunk) <= 1_048_576 {
-    True -> Ok(Nil)
-    False -> Error("Claude SSE event/chunk exceeds limit")
-  })
+  use _ <- result.try(
+    case state.buffered_bytes + string.byte_size(chunk) <= 1_048_576 {
+      True -> Ok(Nil)
+      False -> Error("Claude SSE event/chunk exceeds limit")
+    },
+  )
   feed_lines(state, string.split(chunk, "\n"), [])
 }
 
@@ -103,7 +107,13 @@ fn feed_line(
   reversed_frames: List(String),
 ) -> Result(#(State, List(String)), String) {
   use pair <- result.try(dialect.feed(state.parser, line))
-  let state = State(..state, parser: pair.0)
+  // Constant-time accounting: a comment-heavy event must not rescan all prior
+  // lines on every feed. The parser clears lines only at an event boundary.
+  let buffered = case pair.0.pending_line == "" && pair.0.lines == [] {
+    True -> 0
+    False -> state.buffered_bytes + string.byte_size(line)
+  }
+  let state = State(..state, parser: pair.0, buffered_bytes: buffered)
   use state <- result.try(list.try_fold(pair.1, state, observe))
   feed_lines(state, rest, list.append(list.reverse(pair.1), reversed_frames))
 }
@@ -122,7 +132,7 @@ fn observe(state: State, frame: String) -> Result(State, String) {
   case data {
     "" -> Ok(state)
     _ -> {
-      use value <- result.try(ir.parse(data))
+      use value <- result.try(json_guard.parse_native(data, 1_048_576))
       use kind <- result.try(ir.string_field(value, "type"))
       use _ <- result.try(case names {
         [] -> Ok(Nil)

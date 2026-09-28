@@ -1,0 +1,2 @@
+209b6301ff9bb5b8329d0945309b2da0d58b9951d12113b559ae174c89a43d16  test/gateway_websocket_test.gleam
+9cd4a8052d4cc17adbc6209e8270d53b95a7a40c904d9fdf0260219be3472d3f  test/mimic_gateway_ws_rejection_test_ffi.erl

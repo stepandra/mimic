@@ -331,6 +331,24 @@ pub fn login_with_callback(
   announce: fn(String) -> Nil,
 ) -> Result(Credential, String) {
   use login <- try(begin_login(config, credential_id))
+  use callback <- try(await_callback(config, login, timeout_ms, announce))
+  complete_login(config, store, login, callback.0, callback.1, now_ms())
+}
+
+/// Single-use loopback callback seam. Does not exchange or persist credentials.
+/// The caller owns the pending PKCE Login and consumes this result once.
+pub fn await_callback(
+  config: Config,
+  login: Login,
+  timeout_ms: Int,
+  announce: fn(String) -> Nil,
+) -> Result(#(String, String), String) {
+  use _ <- try(validate_config(config))
+  use _ <- try(case timeout_ms > 0 && timeout_ms <= 300_000 {
+    True -> Ok(Nil)
+    False -> Error("Invalid OAuth callback deadline")
+  })
+  let deadline = monotonic_ms(Millisecond) + timeout_ms
   use redirect <- try(
     uri.parse(config.redirect_uri) |> map_error("Invalid redirect URI"),
   )
@@ -355,11 +373,12 @@ pub fn login_with_callback(
             case uri.parse_query(query) {
               Ok(pairs) ->
                 case
-                  list.key_find(pairs, "state"),
-                  list.key_find(pairs, "code")
+                  list.filter(pairs, fn(pair) { pair.0 == "state" }),
+                  list.filter(pairs, fn(pair) { pair.0 == "code" })
                 {
-                  Ok(state), Ok(code) if state == login.state && code != "" ->
-                    Some(#(state, code))
+                  [#(_, state)], [#(_, code)]
+                    if state == login.state && code != ""
+                  -> Some(#(state, code))
                   _, _ -> None
                 }
               Error(_) -> None
@@ -393,12 +412,11 @@ pub fn login_with_callback(
       case mist.start(builder) {
         Error(_) -> Error("Unable to start loopback OAuth callback listener")
         Ok(server) -> {
-          let result = case process.receive(started, 5000) {
+          let result = case process.receive(started, remaining_ms(deadline)) {
             Ok(actual_port) if actual_port == port -> {
               announce(login.url)
-              case process.receive(callback, timeout_ms) {
-                Ok(#(state, code)) ->
-                  complete_login(config, store, login, state, code, now_ms())
+              case process.receive(callback, remaining_ms(deadline)) {
+                Ok(value) -> Ok(value)
                 Error(_) -> Error("OAuth callback timed out")
               }
             }
@@ -413,6 +431,17 @@ pub fn login_with_callback(
     _, _, _, _, _ ->
       Error("OAuth CLI redirect must specify a loopback HTTP port and path")
   }
+}
+
+type TimeUnit {
+  Millisecond
+}
+
+@external(erlang, "erlang", "monotonic_time")
+fn monotonic_ms(unit: TimeUnit) -> Int
+
+fn remaining_ms(deadline: Int) -> Int {
+  int.max(0, deadline - monotonic_ms(Millisecond))
 }
 
 fn env(name: String) -> Result(String, String) {

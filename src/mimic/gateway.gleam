@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/http.{Get, Post}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -15,12 +16,17 @@ import mimic/auth/runtime_store
 import mimic/auth/storage
 import mimic/dialect/responses
 import mimic/gateway/config.{type Config}
+import mimic/gateway/enrollment
+import mimic/gateway/refresh
+import mimic/gateway/websocket
 import mimic/ingress/keys
 import mimic/ir
 import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream as responses_stream
+import mimic/providers/claude/adapter as claude_adapter
+import mimic/providers/claude/http as claude_http
 import mimic/providers/claude/json_guard as strict_json
-import mimic/providers/claude/request as claude
+import mimic/providers/claude/login as claude_login
 import mimic/providers/codex/adapter as codex
 import mimic/providers/codex/json_guard as request_json
 import mimic/providers/codex/models
@@ -29,6 +35,10 @@ import mimic/providers/codex/response as codex_response
 import mimic/providers/contracts
 import mimic/providers/devin/auth as devin_auth
 import mimic/providers/devin/bridge as devin
+import mimic/providers/kimi/adapter as kimi
+import mimic/providers/kimi/models as kimi_models
+import mimic/providers/kimi/oauth as kimi_oauth
+import mimic/providers/kimi/request as kimi_request
 import mimic/providers/registry
 import mimic/providers/runtime
 import mimic/providers/transport
@@ -56,8 +66,12 @@ type CodexStream {
   )
 }
 
-type XaiStream {
-  XaiStream(opened: runtime.Response, adopted: Bool)
+type NativeStream {
+  NativeStream(opened: runtime.Response, adopted: Bool)
+}
+
+type ClaudeStream {
+  ClaudeStream(opened: runtime.Response, adopted: Bool)
 }
 
 pub fn port(server: Server) -> Int {
@@ -95,6 +109,33 @@ pub fn cli(args: List(String)) -> Result(String, String) {
         }
       }
     }
+    ["credential", "login", path, account_id, private_identity_path] -> {
+      use settings <- result.try(load(path))
+      use account <- result.try(configured_account(settings, account_id))
+      use store <- result.try(storage.new(settings.state_dir) |> sanitized)
+      use source <- result.try(private_text(private_identity_path))
+      use identity <- result.try(strict_json.parse(source) |> sanitized)
+      let key = credential.key(account.provider, account.auth_mode, account.id)
+      use _ <- result.try(
+        case account.oauth {
+          Some(config.ClaudeOAuth(oauth)) ->
+            claude_login.run(
+              oauth,
+              store,
+              key,
+              identity,
+              120_000,
+              io.println,
+              refresh.claude,
+            )
+          Some(config.KimiOAuth(oauth)) ->
+            enrollment.kimi(oauth, store, key, identity, io.println)
+          _ -> Error("configured Claude or Kimi OAuth account required")
+        }
+        |> sanitized,
+      )
+      Ok("credential stored")
+    }
     ["credential", "import", path, account_id, private_path] -> {
       use settings <- result.try(load(path))
       use account <- result.try(configured_account(settings, account_id))
@@ -102,7 +143,33 @@ pub fn cli(args: List(String)) -> Result(String, String) {
       use source <- result.try(private_text(private_path))
       use body <- result.try(strict_json.parse(source) |> sanitized)
       use material <- result.try(case account.provider, account.auth_mode {
-        "claude", "api_key" | "xai", "api_key" ->
+        "claude", "oauth" -> claude_adapter.import_oauth(body) |> sanitized
+        "kimi", "oauth" -> {
+          use oauth <- result.try(case account.oauth {
+            Some(config.KimiOAuth(settings)) -> Ok(settings)
+            _ -> Error("configured Kimi OAuth account required")
+          })
+          use device <- result.try(
+            ir.string_field(body, "device_id") |> sanitized,
+          )
+          use access <- result.try(
+            ir.string_field(body, "access_token") |> sanitized,
+          )
+          use refresh <- result.try(
+            ir.string_field(body, "refresh_token") |> sanitized,
+          )
+          use expires <- result.try(
+            ir.required(body, "expires_at_ms")
+            |> result.try(ir.as_int)
+            |> sanitized,
+          )
+          kimi_oauth.import_material(
+            kimi_oauth.Config(..oauth, device_id: device),
+            auth.Credential(access, refresh, expires),
+          )
+          |> sanitized
+        }
+        "claude", "api_key" | "xai", "api_key" | "kimi", "api_key" ->
           ir.string_field(body, "api_key")
           |> sanitized
           |> result.try(fn(secret) {
@@ -208,7 +275,7 @@ pub fn cli(args: List(String)) -> Result(String, String) {
     }
     _ ->
       Error(
-        "Usage: providers serve <config> | credential import/status/delete <config> <account-id> [private-json-path] | key import/revoke <config> <key-id> [private-text-path]",
+        "Usage: providers serve <config> | credential import/login/status/delete <config> <account-id> [private-json-path] | key import/revoke <config> <key-id> [private-text-path]",
       )
   }
 }
@@ -279,10 +346,10 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
           registry.Model(
             "claude",
             model,
-            ["api_key"],
+            ["api_key", "oauth"],
             ["messages"],
             ["messages", "messages/count_tokens"],
-            [contracts.Buffer],
+            [contracts.Buffer, contracts.Stream],
           ),
         )
       #("codex", model) -> {
@@ -291,10 +358,20 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
           None -> Error("Codex catalog required")
         })
         use entry <- result.try(models.lookup(catalog, model) |> sanitized)
-        codex.registration(entry) |> sanitized
+        use registered <- result.try(codex.registration(entry) |> sanitized)
+        Ok(
+          registry.Model(
+            ..registered,
+            capabilities: case config.codex_websocket {
+              True -> [contracts.WebSocket, ..registered.capabilities]
+              False -> registered.capabilities
+            },
+          ),
+        )
       }
       #("devin", _) -> list.first(devin.models()) |> sanitized
       #("xai", model) -> xai_models.registration(model) |> sanitized
+      #("kimi", model) -> kimi_models.registration(model) |> sanitized
       _ -> Error("unsupported provider")
     }
   })
@@ -324,6 +401,20 @@ fn route(
   identity: String,
 ) -> Response(mist.ResponseData) {
   case req.method, req.path, req.query {
+    Get, "/v1/responses", None if config.codex_websocket -> {
+      let assert Some(catalog) = config.codex_catalog
+      let enabled =
+        config.accounts
+        |> list.filter(fn(account) { account.provider == "codex" })
+        |> list.flat_map(fn(account) { account.models })
+        |> list.unique
+      websocket.upgrade_authenticated(
+        req,
+        engine,
+        identity,
+        websocket.Settings(catalog, config.codex_user_agent, enabled, None),
+      )
+    }
     Get, "/v1/models", None -> {
       let ids =
         config.accounts
@@ -379,7 +470,15 @@ fn route(
       })
     Post, "/v1/chat/completions", None ->
       with_body(req, fn(body) {
-        dispatch(req, config, engine, identity, body, "devin", "generate")
+        dispatch(
+          req,
+          config,
+          engine,
+          identity,
+          body,
+          "chat",
+          "chat/completions",
+        )
       })
     _, _, _ -> reject(404, "unsupported endpoint")
   }
@@ -426,8 +525,16 @@ fn dispatch(
               {
                 a.provider == provider
                 || {
+                  provider == "chat"
+                  && { a.provider == "kimi" || a.provider == "devin" }
+                }
+                || {
                   provider == "responses"
-                  && { a.provider == "codex" || a.provider == "xai" }
+                  && {
+                    a.provider == "codex"
+                    || a.provider == "xai"
+                    || a.provider == "kimi"
+                  }
                 }
               }
               && list.contains(a.models, model)
@@ -436,6 +543,10 @@ fn dispatch(
             Error(_) -> reject(422, "unsupported model")
             Ok(account) -> {
               let provider = account.provider
+              let operation = case provider {
+                "devin" -> "generate"
+                _ -> operation
+              }
               let stream = ir.field(value, "stream") == Some(ir.Boolean(True))
               let mode = case stream {
                 True -> contracts.Streaming
@@ -450,6 +561,7 @@ fn dispatch(
                   case provider {
                     "claude" -> "messages"
                     "devin" -> "openai-chat"
+                    "kimi" if operation == "chat/completions" -> "chat"
                     _ -> "responses"
                   },
                   operation,
@@ -460,13 +572,15 @@ fn dispatch(
                   body,
                 )
               case provider, operation, stream {
-                "claude", "messages", False
+                "claude", "messages", _
                 | "claude", "messages/count_tokens", False
-                -> serve_claude(engine, request)
+                -> serve_claude(req, engine, request, stream)
                 "codex", "responses", _ | "codex", "responses/compact", False ->
                   serve_codex(req, config, engine, identity, request, stream)
                 "xai", "responses", _ | "xai", "responses/compact", False ->
                   serve_xai(req, engine, request, stream)
+                "kimi", "responses", _ | "kimi", "chat/completions", False ->
+                  serve_kimi(req, config, engine, request, stream)
                 "devin", "generate", False ->
                   case devin.execute(engine, None, request) {
                     Ok(body) -> reply(200, body, "application/json")
@@ -481,56 +595,83 @@ fn dispatch(
 }
 
 fn serve_claude(
+  incoming: Request(mist.Connection),
   engine: runtime.Runtime,
   req: contracts.Request,
+  streaming: Bool,
 ) -> Response(mist.ResponseData) {
   let adapter =
-    transport.http(
-      fn(context, request) {
-        use material <- result.try(case context.credential {
-          contracts.ApiKey(token) -> Ok(claude.ApiKey(token))
-          _ ->
-            Error(contracts.Failure(
-              contracts.CredentialUnavailable,
-              contracts.NotSent,
-              None,
-            ))
-        })
-        let operation = case request.operation {
-          "messages/count_tokens" -> claude.CountTokens
-          _ -> claude.Messages(False)
-        }
-        claude.prepare(
-          context.origin,
-          material,
-          operation,
-          [],
-          None,
-          request.body,
-        )
-        |> result.map_error(fn(_) {
-          contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
-        })
-      },
-      fn(_, _) { None },
-      None,
-    )
-  case runtime.execute(engine, adapter, req) {
+    transport.http(claude_adapter.prepare, claude_adapter.rejection, None)
+  case runtime.open(engine, adapter, req) {
     Error(_) -> reject(503, "provider unavailable")
     Ok(opened) ->
-      case opened.status >= 200 && opened.status < 300 {
-        False -> reject(502, "upstream rejected request")
+      case streaming {
         True ->
-          case bit_array.to_string(opened.body) {
-            Error(_) -> reject(502, "invalid upstream response")
-            Ok(body) ->
-              case ir.parse(body) {
+          case responses_http.open_sse(opened.status, opened.headers) {
+            Ok(_) -> stream_claude(incoming, opened)
+            Error(_) -> {
+              runtime.cancel(opened.stream)
+              reject(502, "invalid upstream response")
+            }
+          }
+        False ->
+          case opened.status >= 200 && opened.status < 300 {
+            False -> {
+              runtime.cancel(opened.stream)
+              reject(502, "upstream rejected request")
+            }
+            True ->
+              case
+                read_all(opened.stream, [], 0)
+                |> result.try(bit_array.to_string)
+              {
                 Error(_) -> reject(502, "invalid upstream response")
-                Ok(_) -> reply(200, body, "application/json")
+                Ok(body) ->
+                  case strict_json.parse_native(body, 8_388_608) {
+                    Error(_) -> reject(502, "invalid upstream response")
+                    Ok(_) -> reply(200, body, "application/json")
+                  }
               }
           }
       }
   }
+}
+
+fn stream_claude(
+  req: Request(mist.Connection),
+  opened: runtime.Response,
+) -> Response(mist.ResponseData) {
+  mist.chunked(
+    request: req,
+    response: Response(200, [#("content-type", "text/event-stream")], ""),
+    init: fn(subject) {
+      let adopted = case runtime.adopt(opened.stream) {
+        Ok(_) -> True
+        Error(_) -> {
+          runtime.cancel(opened.stream)
+          False
+        }
+      }
+      process.send(subject, Tick)
+      ClaudeStream(opened, adopted)
+    },
+    loop: fn(state, _, connection) {
+      case state.adopted {
+        False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
+        True ->
+          case
+            claude_http.run(state.opened, fn(frame) {
+              mist.send_chunk(connection, bit_array.from_string(frame))
+              |> result.map(fn(_) { responses_http.Continue })
+              |> result.replace_error("downstream closed")
+            })
+          {
+            Ok(_) -> mist.chunk_stop()
+            Error(_) -> mist.chunk_stop_abnormal("upstream stream failed")
+          }
+      }
+    },
+  )
 }
 
 fn serve_codex(
@@ -659,7 +800,7 @@ fn serve_xai(
       case streaming {
         True ->
           case responses_http.open_sse(opened.status, opened.headers) {
-            Ok(_) -> stream_xai(req, opened)
+            Ok(_) -> stream_native(req, opened, xai.run)
             Error(_) -> {
               runtime.cancel(opened.stream)
               reject(502, "invalid upstream response")
@@ -678,9 +819,66 @@ fn serve_xai(
   }
 }
 
-fn stream_xai(
+fn serve_kimi(
+  req: Request(mist.Connection),
+  config: Config,
+  engine: runtime.Runtime,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
+  let adapter =
+    kimi_request.http_at(
+      fn(context) {
+        configured_account(config, context.account)
+        |> result.map(fn(account) { account.base_path })
+        |> result.map_error(fn(_) {
+          contracts.Failure(
+            contracts.InvalidConfiguration,
+            contracts.NotSent,
+            None,
+          )
+        })
+      },
+      None,
+    )
+  case runtime.open(engine, adapter, request) {
+    Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, _))
+    | Error(contracts.Failure(
+        contracts.InvalidConfiguration,
+        contracts.NotSent,
+        _,
+      )) -> reject(422, "unsupported Kimi request")
+    Error(_) -> reject(503, "provider unavailable")
+    Ok(opened) ->
+      case streaming {
+        True ->
+          case responses_http.open_sse(opened.status, opened.headers) {
+            Ok(_) -> stream_native(req, opened, kimi.run)
+            Error(_) -> {
+              runtime.cancel(opened.stream)
+              reject(502, "invalid upstream response")
+            }
+          }
+        False ->
+          case kimi.collect(opened, request.operation) {
+            Error(_) -> reject(502, "invalid upstream response")
+            Ok(result) ->
+              case bit_array.to_string(result.body) {
+                Ok(body) -> reply(200, body, "application/json")
+                Error(_) -> reject(502, "invalid upstream response")
+              }
+          }
+      }
+  }
+}
+
+fn stream_native(
   req: Request(mist.Connection),
   opened: runtime.Response,
+  run: fn(
+    runtime.Response,
+    fn(responses_stream.Event) -> Result(responses_http.Control, String),
+  ) -> Result(responses_stream.Outcome, contracts.Failure),
 ) -> Response(mist.ResponseData) {
   mist.chunked(
     request: req,
@@ -694,14 +892,14 @@ fn stream_xai(
         }
       }
       process.send(subject, Tick)
-      XaiStream(opened, adopted)
+      NativeStream(opened, adopted)
     },
     loop: fn(state, _, connection) {
       case state.adopted {
         False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
         True ->
           case
-            xai.run(state.opened, fn(event) {
+            run(state.opened, fn(event) {
               case
                 mist.send_chunk(
                   connection,

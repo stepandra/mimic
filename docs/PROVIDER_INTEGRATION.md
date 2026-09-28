@@ -16,6 +16,7 @@ The CLI separates credential/key provisioning from configuration:
 
 ```sh
 gleam run -- providers credential import /absolute/providers.json account-id /absolute/private-credential.json
+gleam run -- providers credential login /absolute/providers.json account-id /absolute/private-identity.json
 gleam run -- providers credential status /absolute/providers.json account-id
 gleam run -- providers credential delete /absolute/providers.json account-id
 gleam run -- providers key import /absolute/providers.json client-id /absolute/private-client-key.txt
@@ -42,11 +43,11 @@ an unimplemented provider look supported.
 
 | Provider | Configured auth | Exposed operations | Deliberately unavailable |
 |---|---|---|---|
-| Claude | `api_key` | Buffered Messages JSON, count_tokens | Gateway SSE/OAuth, model-specific CPA normalization/cloaking |
-| Codex | `oauth` | Responses buffered/SSE, compact | Physical WS, continuation, Responses-lite |
+| Claude | `api_key`, `oauth` | Messages JSON/SSE, count_tokens, configured PKCE login and refresh | Model-specific CPA normalization/cloaking |
+| Codex | `oauth` | Responses buffered/SSE, compact; opt-in native WS with socket-scoped continuation | HTTP continuation, Responses-lite |
 | xAI | `api_key` | Native Responses buffered/SSE, compact | Gateway OAuth, tools, continuation, physical WS |
 | Devin | `session_token` | Experimental buffered one-shot Chat | Remote endpoints, Messages route, streaming, tools, broader conversation/media workflows |
-| Kimi | — | Not registered | Native Kimi adapter/integration not delivered |
+| Kimi | `api_key`, `oauth` | Native text-only Responses JSON/SSE, buffered Chat, configured device enrollment and refresh | Chat SSE, tools/media/thinking transformations, compact, Anthropic delegation, WS |
 
 `GET /v1/models` lists configured, supported models rather than claiming a live
 provider catalog. Client authentication is checked before dispatch; revocation
@@ -60,9 +61,43 @@ loopback HTTP. Without this object, a still-valid imported credential can be
 used, but refresh is unsupported and enters the runtime recovery fence when
 required. This is not a hidden background login mechanism.
 
-The Claude OAuth library/consumer tests remain available without advertising
-OAuth as an exposed gateway mode. Similarly, standalone shared WebSocket
-framing tests do not enable a gateway WebSocket route.
+Claude OAuth configuration requires `oauth.client_id`, `authorize_url`,
+`token_url`, and a loopback `redirect_uri`. Private grant imports require
+`access_token`, `refresh_token`, explicit `expires_at_ms`, `account_uuid`,
+`device_id` (64 lowercase hexadecimal characters), and optional
+`organization_uuid`. Configured login uses a private identity file containing
+the account/device fields, the existing PKCE/callback listener, native JSON
+exchange, and the runtime store. Endpoint-returned identity must agree; no
+account, device, expiry, or fingerprint is guessed. OAuth `metadata.user_id`
+and session headers bind to the authenticated client and selected account.
+
+Kimi is a first-class provider, not generic OpenAI compatibility. Configure
+`provider: "kimi"`, an explicit origin and pinned supported model such as
+`kimi-k2.7-code`; aliases map to the native upstream model. `base_path` defaults
+to `/coding`, with `""` for direct `/v1` and explicit operator prefixes also
+supported. The runtime-selected account supplies origin, base path and auth.
+For OAuth, configure `oauth.domain` (`kimi.com` or `kimi.ai`), `device_url` and
+`token_url`. Endpoints must be the exact approved auth-domain pair or an
+explicit paired loopback test server. Private grants require access/refresh,
+explicit expiry and `device_id`. Device enrollment uses a private file with
+`device_id`, prints the verification URL/user code, polls in the foreground,
+and saves through the runtime store. It does not open a browser or maintain
+a second refresh manager. Private device identity also supplies native
+`X-Msh-Device-Id`. Unsupported request fields fail rather than being dropped.
+
+Private credential files use 0600 and state directories use 0700. This is
+permission-protected storage, not encryption at rest. Source and shipment
+workflows are synthetic; no live login/provider compatibility is established.
+
+`codex_websocket` is a top-level boolean, **false by default**. When explicitly
+enabled with a Codex catalog/account, authenticated `GET /v1/responses` uses
+the separately owned native WebSocket implementation. Only configured Codex
+models receive the WebSocket capability; Claude, Kimi and xAI do not.
+Authentication and trusted tenant derivation precede upgrade. Browser Origin,
+extensions and subprotocol negotiation are rejected. The vendored pinned Mist
+parser rejects duplicate security singleton headers before normalization and
+requires HTTP/1.1 for upgrades; this also protects ordinary HTTP/1.x Authorization
+and Host boundaries. See `MIST_VENDOR.md` and `PROVIDER_WEBSOCKET.md`.
 
 ## Boundaries
 

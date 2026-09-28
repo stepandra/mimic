@@ -16,12 +16,29 @@ pub const max_values = 4096
 const invalid = "Invalid or ambiguous Claude OAuth JSON"
 
 pub fn parse(source: String) -> Result(ir.Value, String) {
+  parse_bounded(source, max_bytes, max_values)
+}
+
+/// Native inference JSON has a larger explicit byte/value budget than OAuth.
+/// Keep grant parsing's original 64 KiB/4096-value limits unchanged.
+pub fn parse_native(
+  source: String,
+  byte_limit: Int,
+) -> Result(ir.Value, String) {
+  parse_bounded(source, byte_limit, 65_536)
+}
+
+fn parse_bounded(
+  source: String,
+  byte_limit: Int,
+  values: Int,
+) -> Result(ir.Value, String) {
   let bytes = bit_array.from_string(source)
-  use _ <- result.try(case bit_array.byte_size(bytes) <= max_bytes {
+  use _ <- result.try(case bit_array.byte_size(bytes) <= byte_limit {
     True -> Ok(Nil)
     False -> Error(invalid)
   })
-  use #(remaining, _) <- result.try(value(bytes, 0, max_values))
+  use #(remaining, _) <- result.try(value(bytes, 0, values))
   case whitespace(remaining) {
     <<>> -> ir.parse(source) |> result.replace_error(invalid)
     _ -> Error(invalid)

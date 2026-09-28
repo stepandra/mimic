@@ -3,8 +3,10 @@ import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import gleam/uri
+import mimic/providers/claude/oauth as claude_oauth
 import mimic/providers/codex/oauth
 import mimic/providers/contracts
+import mimic/providers/kimi/oauth as kimi_oauth
 import mimic/replay
 import mimic/types.{type WireResponse, Capture, Header, Transport}
 
@@ -87,4 +89,25 @@ pub fn send(
     replay.send(origin, capture)
   }
   outcome |> result.map_error(fn(_) { contracts.RefreshUnavailable })
+}
+
+/// Adapt provider plans to the same approved, no-redirect HTTP transport.
+pub fn claude(
+  plan: claude_oauth.TokenRequest,
+) -> Result(claude_oauth.TokenResponse, String) {
+  send(oauth.TokenRequest(plan.url, plan.headers, plan.body))
+  |> result.map(fn(response) {
+    claude_oauth.TokenResponse(response.status, response.headers, response.body)
+  })
+  |> result.replace_error("OAuth transport unavailable")
+}
+
+pub fn kimi(
+  plan: kimi_oauth.TokenPlan,
+) -> Result(kimi_oauth.TokenReply, String) {
+  send(oauth.TokenRequest(plan.url, plan.headers, plan.body))
+  |> result.map(fn(response) {
+    kimi_oauth.TokenReply(response.status, response.headers, response.body)
+  })
+  |> result.replace_error("OAuth transport unavailable")
 }

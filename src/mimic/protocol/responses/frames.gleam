@@ -89,6 +89,37 @@ pub fn feed(
   scan(decoder, chunk, [])
 }
 
+/// Streaming transport boundary: return the first complete event and untouched
+/// remaining bytes. A malformed later frame cannot erase an already-delivered
+/// event just because TCP coalesced them. Uses the same decoder and size rules,
+/// consuming a phase at a time, not allocating a tree node for every byte.
+pub fn feed_one(
+  decoder: Decoder,
+  chunk: BitArray,
+) -> Result(#(Decoder, Option(Event), BitArray), String) {
+  use _ <- result.try(ensure(
+    bit_array.bit_size(chunk) % 8 == 0,
+    "WS input must be byte aligned",
+  ))
+  case chunk {
+    <<>> -> Ok(#(decoder, None, <<>>))
+    _ -> {
+      let take =
+        int.min(
+          decoder.needed - decoder.pending_size,
+          bit_array.byte_size(chunk),
+        )
+      let assert <<prefix:bits-size(take * 8), rest:bits>> = chunk
+      use pair <- result.try(feed(decoder, prefix))
+      case pair.1 {
+        [] -> feed_one(pair.0, rest)
+        [event] -> Ok(#(pair.0, Some(event), rest))
+        _ -> Error("WS decoder emitted more than one phase event")
+      }
+    }
+  }
+}
+
 /// On transport EOF validate framing independently of Responses completion.
 /// A completed response does not make a truncated WS frame or unclean close OK.
 pub fn finish(decoder: Decoder) -> Result(Nil, String) {
