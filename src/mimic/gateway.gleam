@@ -1,0 +1,897 @@
+import gleam/bit_array
+import gleam/bytes_tree
+import gleam/erlang/process
+import gleam/http.{Get, Post}
+import gleam/http/request.{type Request}
+import gleam/http/response.{type Response, Response}
+import gleam/json
+import gleam/list
+import gleam/option.{None, Some}
+import gleam/result
+import gleam/string
+import mimic/auth
+import mimic/auth/runtime as credential
+import mimic/auth/runtime_store
+import mimic/auth/storage
+import mimic/dialect/responses
+import mimic/gateway/config.{type Config}
+import mimic/ingress/keys
+import mimic/ir
+import mimic/protocol/responses/http as responses_http
+import mimic/protocol/responses/stream as responses_stream
+import mimic/providers/claude/json_guard as strict_json
+import mimic/providers/claude/request as claude
+import mimic/providers/codex/adapter as codex
+import mimic/providers/codex/json_guard as request_json
+import mimic/providers/codex/models
+import mimic/providers/codex/request as codex_request
+import mimic/providers/codex/response as codex_response
+import mimic/providers/contracts
+import mimic/providers/devin/auth as devin_auth
+import mimic/providers/devin/bridge as devin
+import mimic/providers/registry
+import mimic/providers/runtime
+import mimic/providers/transport
+import mimic/providers/xai/adapter as xai
+import mimic/providers/xai/bridge as xai_bridge
+import mimic/providers/xai/endpoint as xai_endpoint
+import mimic/providers/xai/models as xai_models
+import mist
+import simplifile
+
+pub opaque type Server {
+  Server(port: Int, pid: process.Pid, engine: runtime.Runtime)
+}
+
+type Tick {
+  Tick
+}
+
+type CodexStream {
+  CodexStream(
+    opened: runtime.Response,
+    prepared: codex_request.Prepared,
+    subject: process.Subject(Tick),
+    adopted: Bool,
+  )
+}
+
+type XaiStream {
+  XaiStream(opened: runtime.Response, adopted: Bool)
+}
+
+pub fn port(server: Server) -> Int {
+  server.port
+}
+
+pub fn load(path: String) -> Result(Config, String) {
+  use source <- result.try(
+    simplifile.read(path)
+    |> result.map_error(fn(_) { "cannot read gateway config" }),
+  )
+  config.decode(source)
+}
+
+/// The CLI never takes credential values as argv, nor returns them as output.
+/// Operators create private 0600 files outside the checkout and pre-create a
+/// 0700 state directory. Runtime records use runtime_store, not legacy auth.
+pub fn cli(args: List(String)) -> Result(String, String) {
+  case args {
+    ["serve", path] -> {
+      use settings <- result.try(load(path))
+      use _ <- result.try(install_signal())
+      case start(settings) {
+        Error(error) -> {
+          restore_signal()
+          Error(error)
+        }
+        Ok(server) -> {
+          let outcome = await_signal()
+          let stopped = stop(server)
+          restore_signal()
+          use _ <- result.try(outcome)
+          use _ <- result.try(stopped)
+          Ok("gateway stopped")
+        }
+      }
+    }
+    ["credential", "import", path, account_id, private_path] -> {
+      use settings <- result.try(load(path))
+      use account <- result.try(configured_account(settings, account_id))
+      use store <- result.try(storage.new(settings.state_dir) |> sanitized)
+      use source <- result.try(private_text(private_path))
+      use body <- result.try(strict_json.parse(source) |> sanitized)
+      use material <- result.try(case account.provider, account.auth_mode {
+        "claude", "api_key" | "xai", "api_key" ->
+          ir.string_field(body, "api_key")
+          |> sanitized
+          |> result.try(fn(secret) {
+            case secret != "" {
+              True -> Ok(contracts.ApiKey(secret))
+              False -> Error("invalid private credential")
+            }
+          })
+        "codex", "oauth" -> {
+          use access <- result.try(
+            ir.string_field(body, "access_token") |> sanitized,
+          )
+          use refresh <- result.try(
+            ir.string_field(body, "refresh_token") |> sanitized,
+          )
+          use expires <- result.try(
+            ir.required(body, "expires_at_ms")
+            |> result.try(ir.as_int)
+            |> sanitized,
+          )
+          use upstream_account <- result.try(
+            ir.string_field(body, "chatgpt_account_id") |> sanitized,
+          )
+          case
+            access != ""
+            && refresh != ""
+            && upstream_account != ""
+            && expires > 0
+          {
+            True ->
+              Ok(
+                contracts.OAuth(
+                  contracts.OAuthData(
+                    auth.Credential(access, refresh, expires),
+                    [#("chatgpt_account_id", upstream_account)],
+                  ),
+                ),
+              )
+            False -> Error("invalid private credential")
+          }
+        }
+        "devin", "session_token" ->
+          ir.string_field(body, "session_token")
+          |> sanitized
+          |> result.try(fn(raw) {
+            devin_auth.format_session_token(raw)
+            |> sanitized
+            |> result.map(fn(token) { contracts.SessionToken(token, []) })
+          })
+        _, _ -> Error("unsupported credential mode")
+      })
+      use _ <- result.try(
+        runtime_store.save(
+          store,
+          credential.key(account.provider, account.auth_mode, account.id),
+          material,
+        )
+        |> sanitized,
+      )
+      Ok("credential imported")
+    }
+    ["credential", "status", path, account_id] -> {
+      use settings <- result.try(load(path))
+      use account <- result.try(configured_account(settings, account_id))
+      use store <- result.try(storage.new(settings.state_dir) |> sanitized)
+      use metadata <- result.try(
+        runtime_store.metadata(
+          store,
+          credential.key(account.provider, account.auth_mode, account.id),
+        )
+        |> sanitized,
+      )
+      Ok(
+        "credential configured: " <> account.id <> " (" <> metadata.kind <> ")",
+      )
+    }
+    ["credential", "delete", path, account_id] -> {
+      use settings <- result.try(load(path))
+      use account <- result.try(configured_account(settings, account_id))
+      use store <- result.try(storage.new(settings.state_dir) |> sanitized)
+      use _ <- result.try(
+        runtime_store.delete(
+          store,
+          credential.key(account.provider, account.auth_mode, account.id),
+        )
+        |> sanitized,
+      )
+      Ok("credential deleted")
+    }
+    ["key", "import", path, key_id, private_path] -> {
+      use settings <- result.try(load(path))
+      use secret <- result.try(private_text(private_path))
+      let secret = string.trim_end(secret)
+      use _ <- result.try(
+        keys.create(settings.state_dir, key_id, secret) |> sanitized,
+      )
+      Ok("client key imported")
+    }
+    ["key", "revoke", path, key_id] -> {
+      use settings <- result.try(load(path))
+      use _ <- result.try(keys.revoke(settings.state_dir, key_id) |> sanitized)
+      Ok("client key revoked")
+    }
+    _ ->
+      Error(
+        "Usage: providers serve <config> | credential import/status/delete <config> <account-id> [private-json-path] | key import/revoke <config> <key-id> [private-text-path]",
+      )
+  }
+}
+
+fn configured_account(
+  config: Config,
+  id: String,
+) -> Result(config.Account, String) {
+  case list.filter(config.accounts, fn(a) { a.id == id }) {
+    [account] -> Ok(account)
+    _ -> Error("account is not uniquely configured")
+  }
+}
+
+fn private_text(path: String) -> Result(String, String) {
+  use bytes <- result.try(private_read(path) |> sanitized)
+  bit_array.to_string(bytes) |> sanitized
+}
+
+pub fn start(config: Config) -> Result(Server, String) {
+  use store <- result.try(storage.new(config.state_dir) |> sanitized)
+  use registrations <- result.try(registrations(config))
+  use registry <- result.try(registry.new(registrations) |> sanitized)
+  use engine <- result.try(
+    runtime.start(store, registry, config.runtime_accounts(config)) |> sanitized,
+  )
+  let ready = process.new_subject()
+  let listener =
+    mist.new(fn(req) { handle(req, config, engine) })
+    |> mist.port(config.listen_port)
+    |> mist.bind("127.0.0.1")
+    |> mist.after_start(fn(port, _, _) { process.send(ready, port) })
+  case mist.start(listener) {
+    Error(_) -> {
+      let _ = runtime.stop(engine)
+      Error("gateway listener failed")
+    }
+    Ok(server) ->
+      case process.receive(ready, 5000) {
+        Ok(actual) -> {
+          process.unlink(server.pid)
+          Ok(Server(actual, server.pid, engine))
+        }
+        Error(_) -> {
+          process.unlink(server.pid)
+          process.send_exit(server.pid)
+          let _ = runtime.stop(engine)
+          Error("gateway listener failed")
+        }
+      }
+  }
+}
+
+pub fn stop(server: Server) -> Result(Nil, String) {
+  process.send_exit(server.pid)
+  runtime.stop(server.engine) |> sanitized
+}
+
+fn registrations(config: Config) -> Result(List(registry.Model), String) {
+  let pairs =
+    config.accounts
+    |> list.flat_map(fn(a) { list.map(a.models, fn(id) { #(a.provider, id) }) })
+    |> list.unique
+  list.try_map(pairs, fn(pair) {
+    case pair {
+      #("claude", model) ->
+        Ok(
+          registry.Model(
+            "claude",
+            model,
+            ["api_key"],
+            ["messages"],
+            ["messages", "messages/count_tokens"],
+            [contracts.Buffer],
+          ),
+        )
+      #("codex", model) -> {
+        use catalog <- result.try(case config.codex_catalog {
+          Some(value) -> Ok(value)
+          None -> Error("Codex catalog required")
+        })
+        use entry <- result.try(models.lookup(catalog, model) |> sanitized)
+        codex.registration(entry) |> sanitized
+      }
+      #("devin", _) -> list.first(devin.models()) |> sanitized
+      #("xai", model) -> xai_models.registration(model) |> sanitized
+      _ -> Error("unsupported provider")
+    }
+  })
+}
+
+fn handle(
+  req: Request(mist.Connection),
+  config: Config,
+  engine: runtime.Runtime,
+) -> Response(mist.ResponseData) {
+  // Authorization is checked before model lookup, body parsing or any runtime
+  // acquisition. The client never controls origin, account, or auth mode.
+  case bearer(req) {
+    Error(_) -> reject(401, "unauthorized")
+    Ok(secret) ->
+      case keys.verify(config.state_dir, secret) {
+        Ok(True) -> route(req, config, engine, verified_identity(secret))
+        _ -> reject(401, "unauthorized")
+      }
+  }
+}
+
+fn route(
+  req: Request(mist.Connection),
+  config: Config,
+  engine: runtime.Runtime,
+  identity: String,
+) -> Response(mist.ResponseData) {
+  case req.method, req.path, req.query {
+    Get, "/v1/models", None -> {
+      let ids =
+        config.accounts
+        |> list.flat_map(fn(a) { a.models })
+        |> list.unique
+      data(
+        200,
+        json.object([
+          #("object", json.string("list")),
+          #(
+            "data",
+            json.array(ids, fn(id) {
+              json.object([
+                #("id", json.string(id)),
+                #("object", json.string("model")),
+              ])
+            }),
+          ),
+        ]),
+      )
+    }
+    Post, "/v1/messages", None ->
+      with_body(req, fn(body) {
+        dispatch(req, config, engine, identity, body, "claude", "messages")
+      })
+    Post, "/v1/messages/count_tokens", None ->
+      with_body(req, fn(body) {
+        dispatch(
+          req,
+          config,
+          engine,
+          identity,
+          body,
+          "claude",
+          "messages/count_tokens",
+        )
+      })
+    Post, "/v1/responses", None ->
+      with_body(req, fn(body) {
+        dispatch(req, config, engine, identity, body, "responses", "responses")
+      })
+    Post, "/v1/responses/compact", None ->
+      with_body(req, fn(body) {
+        dispatch(
+          req,
+          config,
+          engine,
+          identity,
+          body,
+          "responses",
+          "responses/compact",
+        )
+      })
+    Post, "/v1/chat/completions", None ->
+      with_body(req, fn(body) {
+        dispatch(req, config, engine, identity, body, "devin", "generate")
+      })
+    _, _, _ -> reject(404, "unsupported endpoint")
+  }
+}
+
+fn with_body(
+  req: Request(mist.Connection),
+  next: fn(String) -> Response(mist.ResponseData),
+) -> Response(mist.ResponseData) {
+  case
+    request_header(req, "content-type"),
+    request_header(req, "content-encoding")
+  {
+    Ok("application/json"), Error(_) | Ok("application/json"), Ok("identity") ->
+      case mist.read_body(req, max_body_limit: 1_048_576) {
+        Ok(read) ->
+          case bit_array.to_string(read.body) {
+            Ok(body) -> next(body)
+            Error(_) -> reject(400, "invalid request body")
+          }
+        Error(_) -> reject(413, "invalid request body")
+      }
+    _, _ -> reject(415, "unsupported content encoding or type")
+  }
+}
+
+fn dispatch(
+  req: Request(mist.Connection),
+  config: Config,
+  engine: runtime.Runtime,
+  identity: String,
+  body: String,
+  provider: String,
+  operation: String,
+) -> Response(mist.ResponseData) {
+  case request_json.parse(body) {
+    Error(_) -> reject(400, "invalid JSON")
+    Ok(value) ->
+      case ir.string_field(value, "model") {
+        Error(_) -> reject(400, "model required")
+        Ok(model) ->
+          case
+            list.find(config.accounts, fn(a) {
+              {
+                a.provider == provider
+                || {
+                  provider == "responses"
+                  && { a.provider == "codex" || a.provider == "xai" }
+                }
+              }
+              && list.contains(a.models, model)
+            })
+          {
+            Error(_) -> reject(422, "unsupported model")
+            Ok(account) -> {
+              let provider = account.provider
+              let stream = ir.field(value, "stream") == Some(ir.Boolean(True))
+              let mode = case stream {
+                True -> contracts.Streaming
+                False -> contracts.Buffered
+              }
+              let session = identity <> ":" <> request_session(req)
+              let request =
+                contracts.Request(
+                  provider,
+                  account.auth_mode,
+                  model,
+                  case provider {
+                    "claude" -> "messages"
+                    "devin" -> "openai-chat"
+                    _ -> "responses"
+                  },
+                  operation,
+                  mode,
+                  [],
+                  session,
+                  None,
+                  body,
+                )
+              case provider, operation, stream {
+                "claude", "messages", False
+                | "claude", "messages/count_tokens", False
+                -> serve_claude(engine, request)
+                "codex", "responses", _ | "codex", "responses/compact", False ->
+                  serve_codex(req, config, engine, identity, request, stream)
+                "xai", "responses", _ | "xai", "responses/compact", False ->
+                  serve_xai(req, engine, request, stream)
+                "devin", "generate", False ->
+                  case devin.execute(engine, None, request) {
+                    Ok(body) -> reply(200, body, "application/json")
+                    Error(_) -> reject(503, "provider unavailable")
+                  }
+                _, _, _ -> reject(422, "unsupported provider operation")
+              }
+            }
+          }
+      }
+  }
+}
+
+fn serve_claude(
+  engine: runtime.Runtime,
+  req: contracts.Request,
+) -> Response(mist.ResponseData) {
+  let adapter =
+    transport.http(
+      fn(context, request) {
+        use material <- result.try(case context.credential {
+          contracts.ApiKey(token) -> Ok(claude.ApiKey(token))
+          _ ->
+            Error(contracts.Failure(
+              contracts.CredentialUnavailable,
+              contracts.NotSent,
+              None,
+            ))
+        })
+        let operation = case request.operation {
+          "messages/count_tokens" -> claude.CountTokens
+          _ -> claude.Messages(False)
+        }
+        claude.prepare(
+          context.origin,
+          material,
+          operation,
+          [],
+          None,
+          request.body,
+        )
+        |> result.map_error(fn(_) {
+          contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+        })
+      },
+      fn(_, _) { None },
+      None,
+    )
+  case runtime.execute(engine, adapter, req) {
+    Error(_) -> reject(503, "provider unavailable")
+    Ok(opened) ->
+      case opened.status >= 200 && opened.status < 300 {
+        False -> reject(502, "upstream rejected request")
+        True ->
+          case bit_array.to_string(opened.body) {
+            Error(_) -> reject(502, "invalid upstream response")
+            Ok(body) ->
+              case ir.parse(body) {
+                Error(_) -> reject(502, "invalid upstream response")
+                Ok(_) -> reply(200, body, "application/json")
+              }
+          }
+      }
+  }
+}
+
+fn serve_codex(
+  req: Request(mist.Connection),
+  config: Config,
+  engine: runtime.Runtime,
+  identity: String,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
+  let assert Some(catalog) = config.codex_catalog
+  let plans = process.new_subject()
+  let adapter_config =
+    codex.Config(identity, config.codex_user_agent, True, catalog, None)
+  let adapter =
+    transport.http(
+      fn(context, request) {
+        use prepared <- result.try(codex.prepare_native(
+          adapter_config,
+          context,
+          request,
+        ))
+        process.send(plans, #(context.account, prepared))
+        codex.capture(context, request, prepared)
+      },
+      codex.rejection,
+      None,
+    )
+  case runtime.open(engine, adapter, request) {
+    Error(_) -> reject(503, "provider unavailable")
+    Ok(opened) ->
+      case match_plan(plans, opened.account, 0) {
+        Error(_) -> {
+          runtime.cancel(opened.stream)
+          reject(502, "provider plan unavailable")
+        }
+        Ok(prepared) ->
+          case request.operation, streaming {
+            "responses", True ->
+              case responses_http.open_sse(opened.status, opened.headers) {
+                Error(_) -> {
+                  runtime.cancel(opened.stream)
+                  reject(502, "invalid upstream response")
+                }
+                Ok(_) -> stream_codex(req, opened, prepared)
+              }
+            "responses", False ->
+              case codex_response.consume(opened, prepared) {
+                Ok(codex_response.Completed(completion)) ->
+                  reply(
+                    200,
+                    responses.encode_response(completion.response),
+                    "application/json",
+                  )
+                Ok(codex_response.Unsuccessful(response)) ->
+                  reply(
+                    200,
+                    responses.encode_response(response),
+                    "application/json",
+                  )
+                _ -> reject(502, "invalid upstream response")
+              }
+            "responses/compact", False ->
+              case read_all(opened.stream, [], 0) {
+                Error(_) -> reject(502, "invalid upstream response")
+                Ok(body) ->
+                  case bit_array.to_string(body) {
+                    Error(_) -> reject(502, "invalid upstream response")
+                    Ok(text) ->
+                      case
+                        opened.status >= 200 && opened.status < 300,
+                        responses.decode_compact_response(text)
+                      {
+                        True, Ok(document) ->
+                          reply(
+                            200,
+                            responses.encode_compact_response(document),
+                            "application/json",
+                          )
+                        _, _ -> reject(502, "invalid upstream response")
+                      }
+                  }
+              }
+            _, _ -> {
+              runtime.cancel(opened.stream)
+              reject(422, "unsupported operation")
+            }
+          }
+      }
+  }
+}
+
+fn serve_xai(
+  req: Request(mist.Connection),
+  engine: runtime.Runtime,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
+  // Both origin and credential belong to the runtime-selected account.
+  // Capturing the first configured origin here breaks multi-account fallback.
+  let adapter =
+    transport.http(
+      fn(context, request) {
+        let policy = case string.starts_with(context.origin, "http://") {
+          True -> xai_endpoint.LocalMock
+          False -> xai_endpoint.VerifiedTls
+        }
+        let settings =
+          xai_endpoint.Config(
+            xai_endpoint.ApiKey,
+            True,
+            False,
+            Some(context.origin <> "/v1"),
+            Some(context.origin <> "/v1"),
+            None,
+            policy,
+          )
+        xai_bridge.prepare(settings, context, request)
+      },
+      xai_bridge.rejection,
+      None,
+    )
+  case runtime.open(engine, adapter, request) {
+    Error(_) -> reject(503, "provider unavailable")
+    Ok(opened) ->
+      case streaming {
+        True ->
+          case responses_http.open_sse(opened.status, opened.headers) {
+            Ok(_) -> stream_xai(req, opened)
+            Error(_) -> {
+              runtime.cancel(opened.stream)
+              reject(502, "invalid upstream response")
+            }
+          }
+        False ->
+          case xai.collect(opened, request.operation) {
+            Error(_) -> reject(502, "invalid upstream response")
+            Ok(result) ->
+              case bit_array.to_string(result.body) {
+                Ok(body) -> reply(200, body, "application/json")
+                Error(_) -> reject(502, "invalid upstream response")
+              }
+          }
+      }
+  }
+}
+
+fn stream_xai(
+  req: Request(mist.Connection),
+  opened: runtime.Response,
+) -> Response(mist.ResponseData) {
+  mist.chunked(
+    request: req,
+    response: Response(200, [#("content-type", "text/event-stream")], ""),
+    init: fn(subject) {
+      let adopted = case runtime.adopt(opened.stream) {
+        Ok(_) -> True
+        Error(_) -> {
+          runtime.cancel(opened.stream)
+          False
+        }
+      }
+      process.send(subject, Tick)
+      XaiStream(opened, adopted)
+    },
+    loop: fn(state, _, connection) {
+      case state.adopted {
+        False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
+        True ->
+          case
+            xai.run(state.opened, fn(event) {
+              case
+                mist.send_chunk(
+                  connection,
+                  bit_array.from_string(responses_stream.encode_event(event)),
+                )
+              {
+                Ok(_) -> Ok(responses_http.Continue)
+                Error(_) -> Error("downstream closed")
+              }
+            })
+          {
+            Ok(_) -> mist.chunk_stop()
+            Error(_) -> mist.chunk_stop_abnormal("upstream stream failed")
+          }
+      }
+    },
+  )
+}
+
+fn match_plan(
+  plans: process.Subject(#(String, codex_request.Prepared)),
+  account: String,
+  attempts: Int,
+) -> Result(codex_request.Prepared, Nil) {
+  case attempts >= 64 {
+    True -> Error(Nil)
+    False ->
+      case process.receive(plans, 1000) {
+        Ok(#(id, prepared)) if id == account -> Ok(prepared)
+        Ok(_) -> match_plan(plans, account, attempts + 1)
+        Error(_) -> Error(Nil)
+      }
+  }
+}
+
+fn stream_codex(
+  req: Request(mist.Connection),
+  opened: runtime.Response,
+  prepared: codex_request.Prepared,
+) -> Response(mist.ResponseData) {
+  mist.chunked(
+    request: req,
+    response: Response(200, [#("content-type", "text/event-stream")], ""),
+    init: fn(subject) {
+      // The request handler is about to exit; transfer ownership synchronously
+      // before it does. A failed transfer cannot authorize a pull or replay.
+      let adopted = case runtime.adopt(opened.stream) {
+        Ok(_) -> True
+        Error(_) -> {
+          runtime.cancel(opened.stream)
+          False
+        }
+      }
+      process.send(subject, Tick)
+      CodexStream(opened, prepared, subject, adopted)
+    },
+    loop: fn(state, _, connection) {
+      case state.adopted {
+        False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
+        True ->
+          case
+            codex_response.forward(state.opened, state.prepared, fn(event) {
+              case
+                mist.send_chunk(
+                  connection,
+                  bit_array.from_string(responses_stream.encode_event(event)),
+                )
+              {
+                Ok(_) -> Ok(responses_http.Continue)
+                Error(_) -> Error("downstream closed")
+              }
+            })
+          {
+            Ok(_) -> mist.chunk_stop()
+            Error(_) -> mist.chunk_stop_abnormal("upstream stream failed")
+          }
+      }
+    },
+  )
+}
+
+fn read_all(
+  stream: runtime.Stream,
+  chunks: List(BitArray),
+  size: Int,
+) -> Result(BitArray, Nil) {
+  case runtime.next(stream) {
+    Error(_) -> {
+      runtime.cancel(stream)
+      Error(Nil)
+    }
+    Ok(None) -> Ok(bit_array.concat(list.reverse(chunks)))
+    Ok(Some(bytes)) ->
+      case size + bit_array.byte_size(bytes) <= 8_388_608 {
+        True ->
+          read_all(stream, [bytes, ..chunks], size + bit_array.byte_size(bytes))
+        False -> {
+          runtime.cancel(stream)
+          Error(Nil)
+        }
+      }
+  }
+}
+
+fn bearer(req: Request(mist.Connection)) -> Result(String, Nil) {
+  case request_header(req, "authorization") {
+    Ok(value) ->
+      case string.split_once(value, "Bearer ") {
+        Ok(#("", secret)) ->
+          case secret != "" && !string.contains(secret, " ") {
+            True -> Ok(secret)
+            False -> Error(Nil)
+          }
+        _ -> Error(Nil)
+      }
+    Error(_) -> Error(Nil)
+  }
+}
+
+fn request_header(
+  req: Request(mist.Connection),
+  name: String,
+) -> Result(String, Nil) {
+  case list.filter(req.headers, fn(h) { string.lowercase(h.0) == name }) {
+    [#(_, value)] -> Ok(value)
+    _ -> Error(Nil)
+  }
+}
+
+fn request_session(req: Request(mist.Connection)) -> String {
+  case request_header(req, "x-client-request-id") {
+    Ok(value) ->
+      case
+        value != ""
+        && string.byte_size(value) < 129
+        && !string.contains(value, "\r")
+        && !string.contains(value, "\n")
+      {
+        True -> value
+        False -> fresh_id()
+      }
+    _ -> fresh_id()
+  }
+}
+
+fn reject(status: Int, message: String) -> Response(mist.ResponseData) {
+  reply(
+    status,
+    json.object([#("error", json.string(message))]) |> json.to_string,
+    "application/json",
+  )
+}
+
+fn data(status: Int, body: json.Json) -> Response(mist.ResponseData) {
+  reply(status, json.to_string(body), "application/json")
+}
+
+fn reply(
+  status: Int,
+  body: String,
+  content_type: String,
+) -> Response(mist.ResponseData) {
+  Response(
+    status,
+    [#("content-type", content_type)],
+    mist.Bytes(bytes_tree.from_string(body)),
+  )
+}
+
+fn sanitized(value: Result(a, e)) -> Result(a, String) {
+  case value {
+    Ok(v) -> Ok(v)
+    Error(_) -> Error("gateway configuration or private state unavailable")
+  }
+}
+
+@external(erlang, "mimic_gateway_ffi", "identity")
+fn verified_identity(secret: String) -> String
+
+@external(erlang, "mimic_gateway_ffi", "fresh_id")
+fn fresh_id() -> String
+
+@external(erlang, "mimic_gateway_ffi", "private_read")
+fn private_read(path: String) -> Result(BitArray, String)
+
+@external(erlang, "mimic_gateway_ffi", "await_signal")
+fn await_signal() -> Result(Nil, String)
+
+@external(erlang, "mimic_gateway_ffi", "install_signal")
+fn install_signal() -> Result(Nil, String)
+
+@external(erlang, "mimic_gateway_ffi", "restore_signal")
+fn restore_signal() -> Nil

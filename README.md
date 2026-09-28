@@ -78,8 +78,39 @@ The [implementation ledger](docs/IMPLEMENTATION.md) maps every requested slice
 to the available code and its outstanding gates. In particular, production
 Workshop adapters, real-client captures, real OAuth, transport fingerprints,
 and performance targets are not implied by the local demonstrations.
-The [validation report](docs/VALIDATION.md) records the final 179-test runs,
-CLI/shipment checks, browser QA, and the limits of that evidence.
+The [original validation report](docs/VALIDATION.md) records the initial
+179-test runs, CLI/shipment checks, browser QA, and the limits of that evidence.
+Provider integration and its current limitations are tracked separately in
+[docs/PROVIDER_INTEGRATION.md](docs/PROVIDER_INTEGRATION.md). Historical
+per-thread test totals must not be added together or presented as one build.
+The [combined validation report](docs/INTEGRATION_VALIDATION.md) records the
+assembled 463-test gate, CLI/shipment workflows and remaining conformance gaps.
+
+## Provider gateway
+
+The provider gateway is an explicit, separate mode; the original `serve` and
+`serve managed` paths remain available for existing local laboratory workflows.
+
+```sh
+gleam run -- serve providers /absolute/path/to/providers.json
+gleam run -- providers
+```
+
+The gateway uses the configured account/model registry and runtime-owned
+credentials. It does not discover accounts, contact provider endpoints at
+startup, or silently fall back to an arbitrary OpenAI-compatible service.
+Keep the state directory private, provision credentials separately from the
+secret-free configuration, and supply only endpoints you own or are authorized
+to use. Never put tokens in command arguments, checked-in configuration, logs
+or conformance reports.
+
+The assembled code includes the shared Responses protocol, provider runtime,
+and provider-specific adapters. **Inclusion is not a claim of CPA parity.**
+Provider capabilities and the gateway's exposed routes are intentionally
+separate: unsupported transports, conversions and request shapes fail
+explicitly. In particular, the experimental Devin binary path is restricted
+to numeric-loopback test endpoints. Gemini, Antigravity and Copilot are outside
+the selected integration scope.
 
 ## Architecture and invariants
 
@@ -117,13 +148,27 @@ bottleneck. Neither should be introduced merely to populate the roadmap.
 ```sh
 gleam format --check src test
 gleam test
+make integration
 gleam export erlang-shipment
 ```
 
 The shipment includes the BEAM application and vendored static assets. It still
 needs an Erlang runtime and the external tools required by the commands you use.
-CI runs format, tests, the environment diagnostic, and shipment creation on
-Linux. Local state, downloaded development tools, and build output are ignored.
+`make integration` runs the assembled synthetic tests, standalone local
+protocol/runtime scenarios, a fresh-VM credential restoration check, the
+conformance schema check, and shipment creation. CI runs that same local gate
+on Linux. Python 3 is needed for test drivers, not for the runtime service.
+Local state, downloaded development tools, and build output are ignored.
+
+The **strict CPA differential gate is separate**:
+
+```sh
+make parity DRIVERS=/absolute/path/to/drivers.json
+```
+
+Missing CPA drivers or unsupported required capabilities cause a nonzero exit.
+A green local integration build does not waive those failures, establish live
+provider compatibility, or mean that native-client workflows have been tested.
 
 See [AGENTS.md](AGENTS.md) for contribution boundaries and safety invariants.
 Licensed under [MIT](LICENSE).

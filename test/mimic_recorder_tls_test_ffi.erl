@@ -1,11 +1,17 @@
 -module(mimic_recorder_tls_test_ffi).
--export([new_ca_dir/0, roundtrip/4, rejected_request/3]).
+-export([new_ca_dir/0, roundtrip/4, roundtrip_delayed/5, rejected_request/3]).
+
+%% Leaf generation runs two OpenSSL commands, each bounded at ten seconds.
+-define(STARTUP_TIMEOUT, 30000).
 
 new_ca_dir() ->
     list_to_binary(filename:join("build", "mimic-ca-test-" ++
         binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(12))))).
 
 roundtrip(CaCert, CaKey, TrustUpstream, Persist) ->
+    roundtrip_delayed(CaCert, CaKey, TrustUpstream, Persist, 0).
+
+roundtrip_delayed(CaCert, CaKey, TrustUpstream, Persist, StartupDelay) ->
     Me = self(),
     case mimic_recorder_tls_ffi:make_leaf(binary_to_list(CaCert),
                                           binary_to_list(CaKey), "127.0.0.1") of
@@ -18,7 +24,9 @@ roundtrip(CaCert, CaKey, TrustUpstream, Persist) ->
                      {alpn_preferred_protocols, [<<"http/1.1">>]}]),
                 try
                     {ok, {_, UpstreamPort}} = ssl:sockname(Upstream),
-                    UpstreamPid = spawn(fun() -> upstream(Upstream, Me) end),
+                    UpstreamPid = spawn(fun() ->
+                        receive begin_request -> upstream(Upstream, Me) end
+                    end),
                     ProxyPort = free_port(),
                     Url = list_to_binary("https://127.0.0.1:" ++
                                          integer_to_list(UpstreamPort)),
@@ -27,14 +35,17 @@ roundtrip(CaCert, CaKey, TrustUpstream, Persist) ->
                         Me ! {captured, Raw, Endpoint, Alpn},
                         Persist(Raw, Endpoint, Alpn)
                     end,
-                    ProxyPid = spawn(fun() ->
-                        Me ! {proxy_done,
+                    {ProxyPid, ProxyMonitor} = spawn_monitor(fun() ->
+                        timer:sleep(StartupDelay),
+                        Me ! {proxy_done, self(),
                               mimic_recorder_tls_ffi:serve(ProxyPort, CaCert, CaKey,
                                                            Url, Trust, Capture)}
                     end),
                     try
-                        wait_proxy(ProxyPort, 40),
+                        wait_proxy(ProxyPort, ProxyPid, ProxyMonitor,
+                                   erlang:monotonic_time(millisecond) + ?STARTUP_TIMEOUT),
                         Denied = denied_connect(ProxyPort),
+                        UpstreamPid ! begin_request,
                         Response = client_request(ProxyPort, UpstreamPort, CaCert),
                         Captured = receive
                             {captured, Raw, Endpoint, Alpn} ->
@@ -43,6 +54,7 @@ roundtrip(CaCert, CaKey, TrustUpstream, Persist) ->
                         {ok, {Response, Captured, Denied}}
                     after
                         exit(ProxyPid, kill),
+                        erlang:demonitor(ProxyMonitor, [flush]),
                         exit(UpstreamPid, kill)
                     end
                 after ssl:close(Upstream) end
@@ -57,12 +69,15 @@ rejected_request(CaCert, CaKey, Kind) ->
     RemotePort = free_port(),
     Authority = list_to_binary("127.0.0.1:" ++ integer_to_list(RemotePort)),
     Url = <<"https://", Authority/binary>>,
-    ProxyPid = spawn(fun() ->
+    Me = self(),
+    {ProxyPid, ProxyMonitor} = spawn_monitor(fun() ->
+        Me ! {proxy_done, self(),
         mimic_recorder_tls_ffi:serve(ProxyPort, CaCert, CaKey, Url, <<>>,
-            fun(_, _, _) -> {ok, <<"unexpected">>} end)
+            fun(_, _, _) -> {ok, <<"unexpected">>} end)}
     end),
     try
-        wait_proxy(ProxyPort, 40),
+        wait_proxy(ProxyPort, ProxyPid, ProxyMonitor,
+                   erlang:monotonic_time(millisecond) + ?STARTUP_TIMEOUT),
         {ok, Tcp} = gen_tcp:connect({127,0,0,1}, ProxyPort,
                                     [binary, {active, false}], 5000),
         ok = gen_tcp:send(Tcp, <<"CONNECT ", Authority/binary, " HTTP/1.1\r\n\r\n">>),
@@ -84,7 +99,10 @@ rejected_request(CaCert, CaKey, Kind) ->
         {ok, Reply}
     catch Class:Reason ->
         {error, list_to_binary(io_lib:format("~p:~p", [Class, Reason]))}
-    after exit(ProxyPid, kill) end.
+    after
+        exit(ProxyPid, kill),
+        erlang:demonitor(ProxyMonitor, [flush])
+    end.
 
 free_port() ->
     {ok, Socket} = gen_tcp:listen(0, [binary, {ip, {127,0,0,1}}]),
@@ -92,11 +110,24 @@ free_port() ->
     gen_tcp:close(Socket),
     Port.
 
-wait_proxy(_Port, 0) -> error(proxy_not_ready);
-wait_proxy(Port, N) ->
+wait_proxy(Port, Pid, Monitor, Deadline) ->
+    receive
+        {proxy_done, Pid, Result} -> error({proxy_start_failed, Result});
+        {'DOWN', Monitor, process, Pid, Reason} -> error({proxy_stopped, Reason})
+    after 0 -> ok
+    end,
+    case erlang:monotonic_time(millisecond) >= Deadline of
+        true -> error(proxy_not_ready);
+        false -> ok
+    end,
     case gen_tcp:connect({127,0,0,1}, Port, [binary, {active, false}], 100) of
         {ok, S} -> gen_tcp:close(S);
-        _ -> timer:sleep(100), wait_proxy(Port, N - 1)
+        _ ->
+            receive
+                {proxy_done, Pid, Result2} -> error({proxy_start_failed, Result2});
+                {'DOWN', Monitor, process, Pid, Reason2} -> error({proxy_stopped, Reason2})
+            after 100 -> wait_proxy(Port, Pid, Monitor, Deadline)
+            end
     end.
 
 denied_connect(Port) ->

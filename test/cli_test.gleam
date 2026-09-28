@@ -1,11 +1,13 @@
 import gleam/string
 import gleeunit/should
 import mimic
+import mimic/gateway
 
 pub fn help_test() {
   let assert Ok(output) = mimic.dispatch(["help"])
   string.contains(output, "workshop") |> should.be_true
   string.contains(output, "persona") |> should.be_true
+  string.contains(output, "serve providers") |> should.be_true
 }
 
 pub fn version_test() {
@@ -24,4 +26,12 @@ pub fn unknown_command_fails_test() {
 pub fn unknown_arguments_do_not_echo_secrets_test() {
   let assert Error(error) = mimic.dispatch(["secret-as-unknown-command"])
   string.contains(error, "secret-as-unknown-command") |> should.be_false
+}
+
+pub fn provider_gateway_dispatch_test() {
+  // Missing config must reach the new gateway, not the legacy ingress parser.
+  mimic.dispatch(["serve", "providers"])
+  |> should.equal(gateway.cli(["serve"]))
+  mimic.dispatch(["providers"]) |> should.equal(gateway.cli([]))
+  mimic.dispatch(["serve", "providers"]) |> should.be_error
 }

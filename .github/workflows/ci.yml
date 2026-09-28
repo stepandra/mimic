@@ -19,7 +19,5 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes b3sum zstd openssl
       - run: gleam deps download
-      - run: gleam format --check src test
-      - run: gleam test
-      - run: gleam run -- doctor
-      - run: gleam export erlang-shipment
+      - name: Synthetic integration gate
+        run: sh scripts/verify-integration.sh

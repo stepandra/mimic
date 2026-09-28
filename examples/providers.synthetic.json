@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "state_dir": "/absolute/path/to/private-mimic-state",
+  "listen_port": 8080,
+  "accounts": [
+    {
+      "provider": "claude",
+      "auth_mode": "api_key",
+      "id": "synthetic-local-account",
+      "origin": "http://127.0.0.1:8081",
+      "models": ["synthetic-claude"]
+    }
+  ]
+}

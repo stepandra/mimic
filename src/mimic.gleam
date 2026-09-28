@@ -10,6 +10,7 @@ import mimic/differ
 import mimic/doctor
 import mimic/drive
 import mimic/fleet
+import mimic/gateway
 import mimic/ingress
 import mimic/lab
 import mimic/observability
@@ -54,6 +55,8 @@ pub fn dispatch(args: List(String)) -> Result(String, String) {
     ["fleet", "quotas", ..args] -> quota.cli(args)
     ["fleet", ..args] -> fleet.cli(args)
     ["quota", ..args] -> quota.cli(args)
+    ["serve", "providers", ..args] -> gateway.cli(["serve", ..args])
+    ["providers", ..args] -> gateway.cli(args)
     ["serve", ..args] -> ingress.cli(args)
     ["drive", ..args] -> drive.cli(args)
     ["watch", ..args] -> watch.cli(args)
@@ -84,6 +87,8 @@ Usage: mimic <command> [arguments]
   fleet        Credential selection, status, and quotas
   quota        Inspect the persisted quota ledger
   serve        Authenticated Anthropic/OpenAI-compatible ingress
+  providers    Configure and operate the explicit multi-provider gateway
+               serve providers <config.json> starts its loopback listener
   drive        Run a pinned, sandboxed capture scenario
   watch        Detect package-version changes and queue Workshop events
   workshop     Resumable PB/PO/CO pipelines with fail-closed gates

@@ -27,6 +27,13 @@ pub fn local_connect_tls_sse_test() {
   assert alpn == "http/1.1"
 }
 
+pub fn delayed_proxy_startup_does_not_expire_upstream_fixture_test() {
+  let assert Ok(#(cert, key)) = tls.generate_ca(new_ca_dir())
+  let assert Ok(#(response, _, _)) =
+    roundtrip_delayed(cert, key, True, fn(_, _, _) { Ok("synthetic") }, 6200)
+  assert string.starts_with(response, "HTTP/1.1 200 OK")
+}
+
 pub fn capture_is_redacted_before_persistence_test() {
   let assert Ok(#(cert, key)) = tls.generate_ca(new_ca_dir())
   let root = new_ca_dir()
@@ -89,6 +96,15 @@ fn roundtrip(
   key: String,
   trust_upstream: Bool,
   persist: fn(String, String, String) -> Result(String, String),
+) -> Result(#(String, #(String, String, String), String), String)
+
+@external(erlang, "mimic_recorder_tls_test_ffi", "roundtrip_delayed")
+fn roundtrip_delayed(
+  cert: String,
+  key: String,
+  trust_upstream: Bool,
+  persist: fn(String, String, String) -> Result(String, String),
+  startup_delay_ms: Int,
 ) -> Result(#(String, #(String, String, String), String), String)
 
 @external(erlang, "mimic_recorder_tls_test_ffi", "rejected_request")
