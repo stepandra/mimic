@@ -7,7 +7,9 @@ import gleam/string
 import gleam/uri
 import mimic/ir
 import mimic/providers/claude/cache
+import mimic/providers/claude/client_profile
 import mimic/providers/claude/identity as account_identity
+import mimic/providers/claude/policy
 import mimic/types.{type Capture, type Header, Capture, Header, Transport}
 
 pub type Credential {
@@ -50,6 +52,28 @@ pub fn prepare(
   identity: Option(Identity),
   source: String,
 ) -> Result(Capture, String) {
+  prepare_with_policy(
+    origin,
+    credential,
+    operation,
+    caller_headers,
+    identity,
+    source,
+    policy.native(),
+  )
+}
+
+/// `selected` and client headers must be approved by the integration owner.
+/// This function does not authenticate or detect a native client.
+pub fn prepare_with_policy(
+  origin: String,
+  credential: Credential,
+  operation: Operation,
+  caller_headers: List(Header),
+  identity: Option(Identity),
+  source: String,
+  selected: policy.Policy,
+) -> Result(Capture, String) {
   use host <- result.try(origin_host(origin))
   let token = case credential {
     ApiKey(token) | OAuth(token) -> token
@@ -89,7 +113,12 @@ pub fn prepare(
     False -> Error("Invalid Claude body beta")
   })
   use body <- result.try(operation_body(remove(body, "betas"), operation))
-  let body = compatibility(body)
+  use body <- result.try(policy.normalize(body, selected))
+  use body <- result.try(case selected.input, operation {
+    policy.TranslatedMessages, Messages(_) ->
+      cache.ensure_translated(body, credential_is_oauth(credential), selected)
+    _, _ -> Ok(body)
+  })
   use body <- result.try(case credential, identity {
     OAuth(_), Some(Identity(session, _, Some(account))) -> {
       use _ <- result.try(account_identity.validate(account))
@@ -102,6 +131,12 @@ pub fn prepare(
     ApiKey(_), _ -> Ok(body)
   })
   use cache <- result.try(cache.validate(body))
+  use _ <- result.try(
+    case selected.turn == policy.Helper && cache.has_one_hour {
+      True -> Error("Claude helper profile does not support 1h cache")
+      False -> Ok(Nil)
+    },
+  )
   let betas =
     list.filter(caller_headers, fn(h) {
       string.lowercase(h.name) == "anthropic-beta"
@@ -112,7 +147,14 @@ pub fn prepare(
     |> list.filter(fn(b) { b != "" })
     |> list.unique
   let betas =
-    beta_profile(betas, credential, operation, body, cache.has_one_hour)
+    beta_profile(
+      betas,
+      credential,
+      operation,
+      body,
+      cache.has_one_hour,
+      selected,
+    )
   use identity_headers <- result.try(case identity {
     None -> Ok([])
     Some(Identity(session, request, _)) ->
@@ -210,41 +252,10 @@ fn operation_body(
   }
 }
 
-fn compatibility(body: ir.Value) -> ir.Value {
-  let choice = nested_string(body, "tool_choice", "type")
-  let body = case choice {
-    "any" | "tool" -> {
-      let body = remove(body, "thinking")
-      case ir.field(body, "output_config") {
-        Some(ir.Object(fields)) ->
-          case list.filter(fields, fn(f) { f.0 != "effort" }) {
-            [] -> remove(body, "output_config")
-            fields -> set(body, "output_config", ir.Object(fields))
-          }
-        _ -> body
-      }
-    }
-    _ -> body
-  }
-  let thinking = nested_string(body, "thinking", "type")
-  case thinking {
-    "enabled" | "adaptive" | "auto" -> {
-      let body = remove(body, "top_k")
-      let body = case ir.field(body, "temperature") {
-        None | Some(ir.Integer(1)) | Some(ir.Decimal(1.0)) -> body
-        _ -> remove(body, "temperature")
-      }
-      case ir.field(body, "top_p") {
-        Some(ir.Decimal(value)) if value <. 0.95 -> remove(body, "top_p")
-        Some(ir.Integer(value)) if value < 1 -> remove(body, "top_p")
-        _ -> body
-      }
-    }
-    _ ->
-      case ir.field(body, "temperature") {
-        None -> body
-        Some(_) -> remove(body, "top_p")
-      }
+fn credential_is_oauth(credential: Credential) -> Bool {
+  case credential {
+    OAuth(_) -> True
+    ApiKey(_) -> False
   }
 }
 
@@ -254,13 +265,18 @@ fn beta_profile(
   operation: Operation,
   body: ir.Value,
   one_hour: Bool,
+  selected: policy.Policy,
 ) -> List(String) {
-  let base = case operation, requested {
-    CountTokens, [] -> [
-      code_beta, "interleaved-thinking-2025-05-14",
-      "context-management-2025-06-27", "token-counting-2024-11-01",
-    ]
-    _, _ -> requested
+  let base = case operation, selected.input, requested {
+    CountTokens, policy.TranslatedMessages, _ | CountTokens, _, [] ->
+      list.append(
+        [
+          code_beta, "interleaved-thinking-2025-05-14",
+          "context-management-2025-06-27", "token-counting-2024-11-01",
+        ],
+        list.filter(requested, fn(beta) { !managed_beta(beta) }),
+      )
+    _, _, _ -> requested
   }
   let base = case credential {
     ApiKey(_) -> without(base, oauth_beta)
@@ -285,14 +301,19 @@ fn beta_profile(
   let forced =
     list.contains(["any", "tool"], nested_string(body, "tool_choice", "type"))
   let model =
-    ir.string_field(body, "model") |> result.unwrap("") |> string.lowercase
+    ir.string_field(body, "model") |> result.unwrap("") |> policy.model
   let base = case
-    thinking == "disabled" || forced || string.contains(model, "haiku")
+    thinking == "disabled"
+    || forced
+    || model == policy.Haiku
+    || selected.turn == policy.Helper
   {
     True -> without(base, effort_beta)
     False -> base
   }
-  let base = case thinking == "disabled" || forced {
+  let base = case
+    thinking == "disabled" || forced || selected.turn == policy.Helper
+  {
     True -> without(base, display_beta)
     False -> base
   }
@@ -300,10 +321,78 @@ fn beta_profile(
     "" -> base
     _ -> without(base, redact_beta)
   }
-  case ir.string_field(body, "speed") {
-    Ok("fast") -> append_beta(base, "fast-mode-2026-02-01")
-    _ -> base
+  let base = case selected.turn, one_hour, operation {
+    policy.Helper, _, _ | policy.Subagent, False, _ | _, _, CountTokens ->
+      without(base, ttl_beta)
+    _, _, _ -> base
   }
+  let base = case operation, ir.string_field(body, "speed") {
+    Messages(_), Ok("fast") -> append_beta(base, "fast-mode-2026-02-01")
+    _, _ -> base
+  }
+  let advisor = "advisor-tool-2026-03-01"
+  let tools = case ir.field(body, "tools") {
+    Some(ir.Array(tools)) -> tools
+    _ -> []
+  }
+  let needs_advisor =
+    list.contains(requested, advisor)
+    || list.any(tools, fn(tool) {
+      ir.string_field(tool, "type")
+      |> result.unwrap("")
+      |> string.starts_with("advisor_")
+    })
+  case needs_advisor {
+    True -> insert_advisor(without(base, advisor), advisor)
+    False -> base
+  }
+}
+
+/// CPA withClaudeAdvisorToolBeta: known trailer boundaries only. Unknown
+/// betas retain order, and a correctly ordered helper profile stays unchanged.
+fn insert_advisor(betas: List(String), advisor: String) -> List(String) {
+  case betas {
+    [] -> [advisor]
+    [first, ..rest] ->
+      case
+        list.contains(
+          [
+            "advanced-tool-use-2025-11-20", effort_beta,
+            "server-side-fallback-2026-06-01", "fallback-credit-2026-06-01",
+            "structured-outputs-2025-12-15", "fast-mode-2026-02-01",
+            "afk-mode-2026-01-31", ttl_beta, "cache-diagnosis-2026-04-07",
+          ],
+          first,
+        )
+      {
+        True -> [advisor, ..betas]
+        False -> [first, ..insert_advisor(rest, advisor)]
+      }
+  }
+}
+
+/// Managed names from CPA's pinned claudeManagedBetaSet, not an allowlist:
+/// unknown betas remain caller-owned and keep their relative order.
+pub fn managed_beta(beta: String) -> Bool {
+  list.contains(
+    [
+      code_beta, oauth_beta, ttl_beta, effort_beta, display_beta, redact_beta,
+      "token-counting-2024-11-01", "fast-mode-2026-02-01",
+      "context-1m-2025-08-07", "mid-conversation-system-2026-04-07",
+      "per-turn-control-2026-07-01", "timing-2026-09-09",
+      "mid-conversation-tool-changes-2026-07-01", "inline-tools-2026-09-15",
+      "mid-conversation-system-clear-at-2026-08-21",
+      "dangerous-tool-use-2026-09-03", "advisor-tool-2026-03-01",
+      "advanced-tool-use-2025-11-20", "server-side-fallback-2026-06-01",
+      "fallback-credit-2026-06-01", "structured-outputs-2025-12-15",
+      "thinking-binding-controls-2026-08-01", "thinking-resumption-2026-07-17",
+      "prompt-caching-evict-2026-05-12", "cache-diagnosis-2026-04-07",
+      "afk-mode-2026-01-31", "interleaved-thinking-2025-05-14",
+      "thinking-token-count-2026-05-13", "context-management-2025-06-27",
+      "prompt-caching-scope-2026-01-05",
+    ],
+    beta,
+  )
 }
 
 fn append_beta(betas: List(String), beta: String) -> List(String) {
@@ -348,9 +437,7 @@ fn safe_name(name: String) -> Bool {
 
 fn allowed_caller_header(header: Header) -> Bool {
   let name = string.lowercase(header.name)
-  name == "user-agent"
-  || name == "x-app"
-  || string.starts_with(name, "x-stainless-")
+  name != "anthropic-beta" && client_profile.allowed(name)
 }
 
 /// No URL path, query, userinfo, fragment or insecure non-loopback origin.

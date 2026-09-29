@@ -25,6 +25,8 @@ pub fn run(
   use org <- result.try(ir.optional_string(identity, "organization_uuid"))
   let metadata = [#("device_id", device), #("account_uuid", account)]
   use _ <- result.try(adapter.account_identity(metadata))
+  // Reserve/snapshot before creating PKCE state, announcing or doing any I/O.
+  use enrollment <- with_enrollment(store, key)
   use pending <- result.try(oauth.begin(config, key))
   use callback <- result.try(auth.await_callback(
     config,
@@ -51,12 +53,35 @@ pub fn run(
     None -> metadata
     Some(value) -> list.append(metadata, [#("organization_uuid", value)])
   }
-  runtime_store.save(
-    store,
-    key,
+  runtime_store.commit_enrollment(
+    enrollment,
     contracts.OAuth(contracts.OAuthData(tokens.credential, metadata)),
   )
   |> result.replace_error("Claude OAuth persistence failed")
+}
+
+/// Shared-core owns all mutation/generation semantics. On an ordinary failure,
+/// retire only this ticket; a concurrent admin change or committed grant wins.
+/// Panics/process death deliberately leave first-enrollment markers fail-closed
+/// for explicit operator recovery, rather than inventing background cleanup.
+fn with_enrollment(
+  store: storage.Store,
+  key: String,
+  action: fn(runtime_store.Enrollment) -> Result(Nil, String),
+) -> Result(Nil, String) {
+  use enrollment <- result.try(
+    runtime_store.begin_enrollment(store, key)
+    |> result.replace_error("Claude OAuth enrollment unavailable"),
+  )
+  case action(enrollment) {
+    Ok(Nil) -> Ok(Nil)
+    Error(error) ->
+      case runtime_store.cancel_enrollment(enrollment) {
+        Ok(Nil) -> Error(error)
+        Error(_) ->
+          Error("Claude OAuth enrollment failed; cancellation unconfirmed")
+      }
+  }
 }
 
 @external(erlang, "mimic_auth_ffi", "now_ms")
