@@ -6,7 +6,9 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import gleam/uri
 import mimic/auth/runtime as credentials
+import mimic/auth/runtime_store.{type Revision}
 import mimic/auth/storage.{type Store}
 import mimic/fleet
 import mimic/providers/contracts.{
@@ -32,6 +34,21 @@ pub type Account {
   )
 }
 
+/// Operator configuration, never constructed from an inbound request origin.
+/// An account with bindings uses an exclusive protocol/operation allowlist.
+/// All bindings share its existing credential worker, quota and concurrency pool.
+pub type EndpointBinding {
+  EndpointBinding(
+    provider: String,
+    auth_mode: String,
+    account: String,
+    protocol: String,
+    operation: String,
+    origin: String,
+    egress: fleet.Egress,
+  )
+}
+
 pub opaque type Runtime {
   Runtime(
     subject: process.Subject(Message),
@@ -53,6 +70,7 @@ type State {
     store: Store,
     guard: process.Pid,
     accounts: List(Bound),
+    bindings: List(EndpointBinding),
     fleet: fleet.State,
     ledger: quota.Ledger,
     monitors: Dict(Int, #(Lease, process.Monitor, process.Pid)),
@@ -97,7 +115,8 @@ type Read {
 
 type Driver(h) {
   Driver(
-    open: fn(contracts.Context, Request) -> Result(contracts.Opened(h), Failure),
+    open: fn(contracts.Context, Revision, Request) ->
+      Result(contracts.Opened(h), Failure),
     next: fn(h) -> Result(#(Read, h), Failure),
     send: Option(fn(h, Request) -> Result(h, Failure)),
     cancel: fn(h) -> Nil,
@@ -162,6 +181,19 @@ pub fn start(
   registry: Registry,
   accounts: List(Account),
 ) -> Result(Runtime, Failure) {
+  start_with_bindings(store, registry, accounts, [])
+}
+
+pub fn start_with_bindings(
+  store: Store,
+  registry: Registry,
+  accounts: List(Account),
+  bindings: List(EndpointBinding),
+) -> Result(Runtime, Failure) {
+  use _ <- result.try(
+    validate_bindings(registry, accounts, bindings)
+    |> result.replace_error(Failure(InvalidConfiguration, NotSent, None)),
+  )
   use pool <- result.try(
     fleet.new(
       list.map(accounts, fn(a) {
@@ -204,7 +236,15 @@ pub fn start(
       |> process.select(subject)
       |> process.select_monitors(Down)
     Ok(
-      actor.initialised(State(store, guard, bound, pool, ledger, dict.new()))
+      actor.initialised(State(
+        store,
+        guard,
+        bound,
+        bindings,
+        pool,
+        ledger,
+        dict.new(),
+      ))
       |> actor.selecting(selector)
       |> actor.returning(subject),
     )
@@ -216,6 +256,96 @@ pub fn start(
   {
     Ok(started) -> Ok(Runtime(started.data, started.pid, registry))
     Error(_) -> Error(Failure(InvalidConfiguration, NotSent, None))
+  }
+}
+
+fn validate_bindings(
+  registry: Registry,
+  accounts: List(Account),
+  bindings: List(EndpointBinding),
+) -> Result(Nil, String) {
+  let keys =
+    list.map(bindings, fn(b) {
+      #(b.provider, b.auth_mode, b.account, b.protocol, b.operation)
+    })
+  use _ <- result.try(case list.length(list.unique(keys)) == list.length(keys) {
+    True -> Ok(Nil)
+    False -> Error("duplicate endpoint binding")
+  })
+  list.try_each(bindings, fn(b) {
+    use account <- result.try(
+      list.find(accounts, fn(a) {
+        a.provider == b.provider
+        && a.auth_mode == b.auth_mode
+        && a.id == b.account
+      })
+      |> result.replace_error("unknown endpoint binding account"),
+    )
+    use _ <- result.try(
+      case
+        list.any(registry.models(registry), fn(m) {
+          m.provider == b.provider
+          && list.contains(account.models, m.id)
+          && list.contains(m.auth_modes, b.auth_mode)
+          && list.contains(m.protocols, b.protocol)
+          && list.contains(m.operations, b.operation)
+        })
+      {
+        True -> Ok(Nil)
+        False -> Error("endpoint binding is not a registered operation")
+      },
+    )
+    use _ <- result.try(
+      fleet.validate(fleet.Profile(
+        account.id,
+        b.origin,
+        b.egress,
+        account.max_in_flight,
+      )),
+    )
+    case uri.parse(b.origin) {
+      Ok(uri.Uri(
+        userinfo: None,
+        query: None,
+        fragment: None,
+        path: path,
+        port: port,
+        ..,
+      ))
+        if path == "" || path == "/"
+      ->
+        case port {
+          None -> Ok(Nil)
+          Some(port) if port > 0 && port < 65_536 -> Ok(Nil)
+          _ -> Error("invalid endpoint binding port")
+        }
+      _ ->
+        Error("endpoint binding must be an origin without path or credentials")
+    }
+  })
+}
+
+fn endpoint(
+  bindings: List(EndpointBinding),
+  account: Account,
+  request: Request,
+) -> Result(Account, String) {
+  let bindings =
+    list.filter(bindings, fn(b) {
+      b.provider == account.provider
+      && b.auth_mode == account.auth_mode
+      && b.account == account.id
+    })
+  case bindings {
+    [] -> Ok(account)
+    _ ->
+      list.find(bindings, fn(b) {
+        b.protocol == request.protocol && b.operation == request.operation
+      })
+      |> result.map(fn(b) {
+        Account(..account, origin: b.origin, egress: b.egress)
+      })
+      |> result.replace_error("operation has no approved endpoint")
   }
 }
 
@@ -265,6 +395,7 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
           b.account.provider == request.provider
           && b.account.auth_mode == request.auth_mode
           && list.contains(b.account.models, request.model)
+          && result.is_ok(endpoint(state.bindings, b.account, request))
           && !list.contains(excluded, b.key)
           && case request.pinned_account {
             None -> True
@@ -294,6 +425,9 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
         Ok(#(pool, selection)) -> {
           let assert Ok(bound) =
             list.find(state.accounts, fn(b) { b.key == selection.profile.id })
+          let assert Ok(account) =
+            endpoint(state.bindings, bound.account, request)
+          let bound = Bound(..bound, account: account)
           let lease = Lease(selection, bound)
           let monitor = process.monitor(owner)
           process.send(reply, Ok(lease))
@@ -386,10 +520,29 @@ pub fn open(
   adapter: Adapter(h),
   request: Request,
 ) -> Result(Response, Failure) {
+  open_scoped(
+    runtime,
+    adapter,
+    fn(context, _, request) { adapter.open(context, request) },
+    request,
+  )
+}
+
+/// Additive trusted-generation hook. Replaces only adapter.open; next, cancel
+/// and rejection keep their ABI. The callback runs with the selected account,
+/// approved origin and authoritative revision, never a token-derived digest.
+/// Generation/scope must stay private; provider code owns continuation policy.
+pub fn open_scoped(
+  runtime: Runtime,
+  adapter: Adapter(h),
+  open: fn(contracts.Context, Revision, Request) ->
+    Result(contracts.Opened(h), Failure),
+  request: Request,
+) -> Result(Response, Failure) {
   open_driver(
     runtime,
     Driver(
-      adapter.open,
+      open,
       fn(handle) {
         adapter.next(handle)
         |> result.map(fn(value) {
@@ -421,7 +574,7 @@ pub fn open_session(
   use response <- result.try(open_driver(
     runtime,
     Driver(
-      adapter.open,
+      fn(context, _, request) { adapter.open(context, request) },
       fn(handle) {
         adapter.receive(handle)
         |> result.map(fn(pair) {
@@ -511,7 +664,7 @@ fn open_driver(
           let selector = process.new_selector() |> process.select(subject)
           case attempt(runtime, adapter, request, []) {
             Error(error) -> process.send(reply, Error(error))
-            Ok(#(lease, opened, material)) -> {
+            Ok(#(lease, opened, generation)) -> {
               process.send(
                 reply,
                 Ok(Response(
@@ -528,7 +681,7 @@ fn open_driver(
                 opened.handle,
                 selector,
                 Request(..request, body: ""),
-                material,
+                generation,
               )
             }
           }
@@ -725,7 +878,7 @@ fn attempt(
   adapter: Driver(h),
   request: Request,
   excluded: List(String),
-) -> Result(#(Lease, contracts.Opened(h), contracts.AuthMaterial), Failure) {
+) -> Result(#(Lease, contracts.Opened(h), Revision), Failure) {
   use lease <- result.try(ask(
     runtime.subject,
     runtime.pid,
@@ -734,7 +887,8 @@ fn attempt(
   ))
   let account = lease.bound.account
   let outcome = {
-    use material <- result.try(credentials.acquire(lease.bound.worker))
+    use acquired <- result.try(credentials.acquire_versioned(lease.bound.worker))
+    let #(material, generation) = acquired
     let session_key =
       json.array([lease.bound.key, request.session], json.string)
       |> json.to_string
@@ -747,13 +901,14 @@ fn attempt(
         session_key,
         material,
       ),
+      generation,
       request,
     )
-    |> result.map(fn(opened) { #(opened, material) })
+    |> result.map(fn(opened) { #(opened, generation) })
   }
   let outcome = case outcome {
     Error(error) -> Error(error)
-    Ok(#(opened, material)) -> {
+    Ok(#(opened, generation)) -> {
       let rejection = adapter.rejection(opened.status, opened.headers)
       let retry = case rejection {
         Some(error) -> error.retry_after_ms
@@ -779,13 +934,13 @@ fn attempt(
               adapter.cancel(opened.handle)
               Error(error)
             }
-            None -> Ok(#(opened, material))
+            None -> Ok(#(opened, generation))
           }
       }
     }
   }
   case outcome {
-    Ok(#(opened, material)) -> Ok(#(lease, opened, material))
+    Ok(#(opened, generation)) -> Ok(#(lease, opened, generation))
     Error(error) -> {
       let _ = release_lease(runtime, lease)
       case retryable(error) && request.pinned_account == None {
@@ -848,7 +1003,7 @@ fn stream_loop(
   handle: h,
   selector: process.Selector(StreamMessage),
   request: Request,
-  material: contracts.AuthMaterial,
+  generation: Revision,
 ) -> Nil {
   case process.selector_receive(selector, 60_000) {
     Ok(Pull(reply)) ->
@@ -862,7 +1017,7 @@ fn stream_loop(
             next,
             selector,
             request,
-            material,
+            generation,
           )
         }
         Ok(_) -> {
@@ -889,8 +1044,10 @@ fn stream_loop(
         use _ <- result.try(registry.resolve(runtime.registry, next_request))
         // Re-read through the durable credential worker before every turn.
         // Rotation/deletion/refresh never silently re-authenticates a socket.
-        use current <- result.try(credentials.acquire(lease.bound.worker))
-        use _ <- result.try(case current == material {
+        use current <- result.try(credentials.acquire_versioned(
+          lease.bound.worker,
+        ))
+        use _ <- result.try(case current.1 == generation {
           True -> Ok(Nil)
           False -> Error(Failure(CredentialUnavailable, Started, None))
         })
@@ -906,7 +1063,7 @@ fn stream_loop(
             next,
             selector,
             request,
-            material,
+            generation,
           )
         }
         Error(error) -> {
