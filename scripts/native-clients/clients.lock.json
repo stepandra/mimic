@@ -1,0 +1,56 @@
+{
+  "schema": "mimic.native-clients-lock/v1",
+  "platform": "linux/amd64",
+  "clients": {
+    "claude": {
+      "package": "@anthropic-ai/claude-code-linux-x64",
+      "version": "2.1.284",
+      "license": "SEE LICENSE IN LICENSE.md",
+      "source": "https://github.com/anthropics/claude-code",
+      "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.284.tgz",
+      "integrity": "sha512-hjjPgN4u8DvnzZqWDYnU5xxQkykuUrkUoVeeutVLXjrhx4qeRPmwgZ69BFAHmV42FBRdiRwbLbiDE9nkQdAE8g==",
+      "archive_sha256": "642690c3afaa22029c17341e520d8c35ca85857fce6dcc9ecd90ef5e3c7f1027",
+      "executable_sha256": "5cd90aabd83f8a15136c35aa37bb1d92b348993573316643dc3fe4e04afbf88f",
+      "member": "package/claude"
+    },
+    "codex": {
+      "package": "@openai/codex",
+      "version": "0.158.0-linux-x64",
+      "license": "Apache-2.0",
+      "source": "https://github.com/openai/codex",
+      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.158.0-linux-x64.tgz",
+      "integrity": "sha512-mY12GZPM8TuOWVGxCyNV2NSA8t1uIupm9Nhu9VeQVEvvxBKN08U8bLH+vn7oISUHZPC8bwhROIbo/ZUxqV6XMg==",
+      "archive_sha256": "3fe84106aaf2fbfc13299068510d34b3d0157eeb9af4b37be8cf5416f485a6bb",
+      "executable_sha256": "167c0148a849d2444f1b5a7fb5f8bb2de1de5ae13a2a504b833fc765980f5cd9",
+      "member": "package/vendor/x86_64-unknown-linux-musl/bin/codex"
+    }
+  },
+  "inventory_only": {
+    "kimi": {
+      "package": "@moonshot-ai/kimi-code",
+      "version": "2.1.1",
+      "license": "MIT",
+      "source": "https://github.com/MoonshotAI/kimi-code",
+      "source_revision": "f67e6398fb3210ad8ace970e2dfd5bcc984ed61f",
+      "url": "https://registry.npmjs.org/@moonshot-ai/kimi-code/-/kimi-code-2.1.1.tgz",
+      "integrity": "sha512-xClqcnTQUKgKDbeOGPU78qcwxGzL8wA2rqWuOX3CLpyQ1/NhSX7jAh6hZo/JFwThSX8obkgef3uw/li5JaJNyw==",
+      "status": "blocked",
+      "reason": "Transitive Node dependencies and runtime not locked; no executable adapter yet."
+    },
+    "grok": {
+      "source": "https://github.com/xai-org/grok-build",
+      "source_revision": "f0e3be1100ef5252488e3be8bb0e91cf68d8c305",
+      "upstream_source_revision": "036a5d8348cd744767cd0b08518ab17bf608fa7f",
+      "license": "Apache-2.0",
+      "status": "blocked",
+      "reason": "Source available; executable build closure not pinned."
+    },
+    "devin": {
+      "source": "https://github.com/CognitionAI/devin-cli",
+      "source_revision": "bd4163ed29e934b898f185752182c91aacac20f7",
+      "license": "not established for implementation",
+      "status": "blocked",
+      "reason": "Official distribution repository found, but source-backed CLI implementation not established."
+    }
+  }
+}
