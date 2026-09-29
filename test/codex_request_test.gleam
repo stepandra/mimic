@@ -292,6 +292,14 @@ pub fn codex_http_vs_websocket_continuation_and_cancellation_test() {
       "{\"type\":\"function_call\",\"name\":\"lookup\",\"call_id\":\"call_1\",\"arguments\":\"{}\"}",
     )
   let retained = session.retain_history(receipt, [call])
+  // Even complete history cannot convert a WS generation receipt into HTTP.
+  request.prepare(body, context(), route(), Some(retained), [])
+  |> should.be_error
+  let assert Ok(http_receipt) =
+    session.completed(identity, "resp_1", [
+      responses.PendingCall("call_1", responses.Function),
+    ])
+  let retained = session.retain_history(http_receipt, [call])
   let assert Ok(http) =
     request.prepare(body, context(), route(), Some(retained), [])
   ir.field(http.body, "previous_response_id") |> should.equal(None)

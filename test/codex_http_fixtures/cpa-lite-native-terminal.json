@@ -1,0 +1,31 @@
+{
+  "provenance": "Actual local execution of pinned CPA tests against synthetic loopback upstream; not a live provider capture",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "source_test": "internal/runtime/executor/codex_native_fidelity_test.go",
+  "case": "TestCodexNativeStreamFidelity/codex/http/lite=metadata/buffering=false",
+  "observed_upstream_request": {
+    "model": "gpt-5.6-sol",
+    "input": [],
+    "parallel_tool_calls": false,
+    "client_metadata": {
+      "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+    }
+  },
+  "observed_downstream_terminal": {
+    "type": "response.completed",
+    "response": {
+      "id": "resp_1",
+      "status": "completed",
+      "output": [],
+      "future": {"ok": true},
+      "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+    }
+  },
+  "mimic_comparison": {
+    "parallel_tool_calls": "matches",
+    "automatic_image_tool_injection": "absent in both",
+    "native_request_fields": "MIMIC additionally normalizes stream/store/include/cache fields; not byte parity",
+    "native_sparse_terminal": "unsupported by current shared codec; no successful receipt",
+    "reason": "CPA preserves native sparse output rather than applying compatibility-mode backfill"
+  }
+}

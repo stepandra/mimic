@@ -1,9 +1,18 @@
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import mimic/auth/crypto
 import mimic/dialect/responses.{type PendingCall}
 import mimic/ir
+
+/// Provider replay policy, not a persistence mechanism. The gateway must also
+/// bound receipt count, keep state private and discard it on restart/revocation.
+pub const http_ttl_ms = 900_000
+
+pub const http_max_history_bytes = 1_048_576
+
+pub const http_max_history_items = 4096
 
 /// IDs supplied by the authenticated runtime, never raw credentials.
 pub type Scope {
@@ -30,6 +39,7 @@ pub opaque type Continuation {
     history: Option(List(ir.Value)),
     connection_generation: Option(String),
     cancelled: Bool,
+    expires_ms: Int,
   )
 }
 
@@ -62,15 +72,35 @@ pub fn completed(
   response_id: String,
   pending_calls: List(PendingCall),
 ) -> Result(Continuation, String) {
+  completed_at(identity, response_id, pending_calls, now_ms())
+}
+
+/// Trusted clock injection for deterministic policy tests. Never take this time
+/// or the history from an ingress request.
+pub fn completed_at(
+  identity: Identity,
+  response_id: String,
+  pending_calls: List(PendingCall),
+  now: Int,
+) -> Result(Continuation, String) {
   case
-    response_id == ""
+    now < 0
+    || response_id == ""
     || list.any(pending_calls, fn(call) { call.id == "" })
     || list.length(list.unique(list.map(pending_calls, fn(call) { call.id })))
     != list.length(pending_calls)
   {
     True -> Error("invalid Codex continuation metadata")
     False ->
-      Ok(Continuation(identity, response_id, pending_calls, None, None, False))
+      Ok(Continuation(
+        identity,
+        response_id,
+        pending_calls,
+        None,
+        None,
+        False,
+        now + http_ttl_ms,
+      ))
   }
 }
 
@@ -110,13 +140,35 @@ pub fn retain_history(
   continuation: Continuation,
   history: List(ir.Value),
 ) -> Continuation {
-  Continuation(..continuation, history: Some(history))
+  case
+    list.length(history) <= http_max_history_items
+    && string.byte_size(ir.stringify(ir.Array(history)))
+    <= http_max_history_bytes
+  {
+    True -> Continuation(..continuation, history: Some(history))
+    False -> Continuation(..continuation, history: None, cancelled: True)
+  }
 }
 
 pub fn replay(continuation: Continuation) -> Result(List(ir.Value), String) {
-  case continuation.history, continuation.cancelled {
-    Some(history), False -> Ok(history)
-    _, _ -> Error("Codex HTTP continuation requires trusted complete history")
+  replay_at(continuation, now_ms())
+}
+
+pub fn replay_at(
+  continuation: Continuation,
+  now: Int,
+) -> Result(List(ir.Value), String) {
+  case
+    continuation.history,
+    continuation.cancelled,
+    continuation.connection_generation
+  {
+    Some(history), False, None
+      if now >= continuation.expires_ms - http_ttl_ms
+      && now < continuation.expires_ms
+    -> Ok(history)
+    _, _, _ ->
+      Error("Codex HTTP continuation requires trusted complete HTTP history")
   }
 }
 
@@ -130,7 +182,7 @@ pub fn validate(
   previous_id: String,
 ) -> Result(List(PendingCall), String) {
   case continuation {
-    Some(Continuation(bound, id, pending, _, _, False))
+    Some(Continuation(bound, id, pending, _, _, False, _))
       if bound == identity && id == previous_id
     -> Ok(pending)
     _ ->
@@ -143,3 +195,6 @@ pub fn validate(
 pub fn no_continuation() -> Option(Continuation) {
   None
 }
+
+@external(erlang, "mimic_auth_ffi", "now_ms")
+fn now_ms() -> Int

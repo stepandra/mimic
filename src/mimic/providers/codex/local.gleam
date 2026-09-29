@@ -56,11 +56,23 @@ pub fn main() {
 pub fn cli(args: List(String)) -> Result(String, String) {
   case args {
     [state_dir] -> run(state_dir)
+    ["lite", state_dir] -> run_lite(state_dir)
     _ -> Error("usage: codex local <existing-private-0700-state-directory>")
   }
 }
 
 pub fn run(state_dir: String) -> Result(String, String) {
+  run_operation(state_dir, "responses")
+}
+
+pub fn run_lite(state_dir: String) -> Result(String, String) {
+  run_operation(state_dir, "responses/lite")
+}
+
+fn run_operation(
+  state_dir: String,
+  operation: String,
+) -> Result(String, String) {
   let observations = process.new_subject()
   let ports = process.new_subject()
   let builder =
@@ -93,6 +105,16 @@ pub fn run(state_dir: String) -> Result(String, String) {
         }
         Error(_) -> #(False, False)
       }
+      let mode_valid = case operation, req.path, decoded {
+        "responses/lite", "/backend-api/codex/responses", Ok(request) ->
+          list.contains(req.headers, #(
+            "x-openai-internal-codex-responses-lite",
+            "true",
+          ))
+          && ir.field(request.document, "parallel_tool_calls")
+          == Some(ir.Boolean(False))
+        _, _, _ -> True
+      }
       let authorization_ok =
         list.contains(req.headers, #(
           "authorization",
@@ -112,7 +134,7 @@ pub fn run(state_dir: String) -> Result(String, String) {
             "chatgpt-account-id",
             "synthetic-provider-account",
           )),
-          body_valid,
+          body_valid && mode_valid,
           continuation_replayed,
         ),
       )
@@ -125,7 +147,13 @@ pub fn run(state_dir: String) -> Result(String, String) {
           "application/json",
           fixtures.compact,
         )
-        _, _ -> #("text/event-stream", fixtures.sse())
+        _, _ -> #("text/event-stream", case continuation_replayed {
+          True ->
+            fixtures.sse()
+            |> string.replace("resp_synthetic", "resp_second")
+            |> string.replace("call_synthetic", "call_second")
+          False -> fixtures.sse()
+        })
       }
       http_response.new(status)
       |> http_response.set_header("content-type", content_type)
@@ -144,7 +172,12 @@ pub fn run(state_dir: String) -> Result(String, String) {
       process.receive(ports, 1000)
       |> result.map_error(fn(_) { "synthetic provider port missing" }),
     )
-    execute(state_dir, "http://127.0.0.1:" <> int.to_string(port), observations)
+    execute(
+      state_dir,
+      "http://127.0.0.1:" <> int.to_string(port),
+      observations,
+      operation,
+    )
   }
   process.send_abnormal_exit(server.pid, Shutdown)
   outcome
@@ -154,6 +187,7 @@ fn execute(
   state_dir: String,
   origin: String,
   observations: process.Subject(Observation),
+  operation: String,
 ) -> Result(String, String) {
   use store <- result.try(storage.new(state_dir))
   let material =
@@ -211,7 +245,7 @@ fn execute(
   use runtime <- result.try(
     runtime.start(store, registry, accounts) |> safe_error,
   )
-  let outcome = exercise(runtime, observations)
+  let outcome = exercise(runtime, observations, operation)
   let stopped = runtime.stop(runtime) |> safe_error
   use _ <- result.try(stopped)
   outcome
@@ -220,6 +254,7 @@ fn execute(
 fn exercise(
   runtime: runtime.Runtime,
   observations: process.Subject(Observation),
+  operation: String,
 ) -> Result(String, String) {
   let config =
     adapter.Config(
@@ -250,7 +285,7 @@ fn exercise(
       "oauth",
       "gpt-5.5",
       "responses",
-      "responses",
+      operation,
       contracts.Buffered,
       [],
       "synthetic-session",
@@ -287,12 +322,13 @@ fn exercise(
   // The successful HTTP terminal supplies the trusted history receipt. A real
   // follow-up is pinned to the originating runtime account and sent over HTTP.
   let continuing =
-    adapter.http(
+    adapter.http_planned(
       adapter.Config(..config, continuation: Some(completion.continuation)),
       None,
+      fn(account, plan) { process.send(plans, #(account, plan)) },
     )
-  use _ <- result.try(
-    runtime.execute(
+  use second <- result.try(
+    runtime.open(
       runtime,
       continuing,
       contracts.Request(
@@ -303,6 +339,16 @@ fn exercise(
     )
     |> safe_error,
   )
+  use second_plan <- result.try(take_plan(plans, second.account))
+  use second_terminal <- result.try(codex_response.consume(second, second_plan))
+  use _ <- result.try(case second_terminal {
+    codex_response.Completed(completed) ->
+      check(
+        completed.response.id == "resp_second",
+        "second HTTP turn lost its terminal",
+      )
+    _ -> Error("second HTTP turn did not complete")
+  })
   use replay <- result.try(read_observation(
     observations,
     "/backend-api/codex/responses",
