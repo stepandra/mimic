@@ -12,21 +12,137 @@ import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream
 import mimic/providers/contracts
 import mimic/providers/runtime
-import mimic/providers/transport
 import mimic/providers/xai/bridge
 import mimic/providers/xai/endpoint
+import mimic/providers/xai/request as xai_request
+import mimic/providers/xai/tools
 import mimic/types.{type Header, Header}
+
+pub opaque type Handle {
+  Handle(
+    upstream: egress.Stream,
+    refs: List(tools.Ref),
+    codec: Option(Result(stream.Stream, String)),
+  )
+}
 
 /// Gateway factory hook. Credential values are selected from Context only.
 pub fn http(
   config: endpoint.Config,
   ca_file: Option(String),
-) -> contracts.Adapter(egress.Stream) {
-  transport.http(
-    fn(context, request) { bridge.prepare(config, context, request) },
-    bridge.rejection,
+) -> contracts.Adapter(Handle) {
+  http_with_config(fn(_) { config }, ca_file)
+}
+
+/// Runtime-approved origin is selected per open, including account failover.
+/// No key, account or first-account base URL is captured by this factory.
+pub fn selected_http(
+  config: endpoint.Config,
+  ca_file: Option(String),
+) -> contracts.Adapter(Handle) {
+  http_with_config(
+    fn(context) {
+      endpoint.Config(
+        ..config,
+        http_base: Some(context.origin <> "/v1"),
+        compact_base: Some(context.origin <> "/v1"),
+      )
+    },
     ca_file,
   )
+}
+
+fn http_with_config(config, ca_file) {
+  contracts.Adapter(
+    open: fn(context, request) {
+      use plan <- result.try(bridge.prepare_plan(
+        config(context),
+        context,
+        request,
+      ))
+      use opened <- result.try(egress.stream_open(
+        context.origin,
+        plan.capture,
+        ca_file,
+      ))
+      let codec = case
+        request.operation == "responses" && opened.0 >= 200 && opened.0 < 300
+      {
+        True -> Some(responses_http.open_sse(opened.0, opened.1))
+        False -> None
+      }
+      Ok(contracts.Opened(
+        opened.0,
+        opened.1,
+        Handle(opened.2, plan.tool_refs, codec),
+      ))
+    },
+    next: next,
+    cancel: fn(handle) { egress.stream_cancel(handle.upstream) },
+    rejection: bridge.rejection,
+  )
+}
+
+/// Shared codec validates framing/lifecycle; the only provider transform is
+/// restoration with the refs produced in this exact selected-account open.
+/// A deferred error preserves valid events preceding a bad frame in one chunk.
+fn next(handle: Handle) {
+  case handle.codec {
+    Some(Error(_)) -> {
+      egress.stream_cancel(handle.upstream)
+      Error(invalid_response())
+    }
+    codec -> {
+      use chunk <- result.try(egress.stream_next(handle.upstream))
+      case chunk, codec {
+        None, Some(Ok(state)) ->
+          stream.finish(state)
+          |> result.map(fn(_) { None })
+          |> result.replace_error(invalid_response())
+        None, None -> Ok(None)
+        Some(#(bytes, upstream)), None ->
+          Ok(Some(#(bytes, Handle(..handle, upstream: upstream))))
+        Some(#(bytes, upstream)), Some(Ok(state)) -> {
+          let batch = stream.feed_partial(state, bytes)
+          let next_handle =
+            Handle(..handle, upstream: upstream, codec: Some(batch.next))
+          // The outer streaming consumer may stop immediately on a terminal.
+          // Do not hide a known same-chunk failure behind that terminal: keep
+          // its nonterminal prefix, then deliver the deferred protocol error.
+          let events = case batch.next {
+            Ok(_) -> batch.events
+            Error(_) ->
+              list.filter(batch.events, fn(event) {
+                !list.contains(
+                  [
+                    "response.completed",
+                    "response.failed",
+                    "response.incomplete",
+                    "response.cancelled",
+                    "error",
+                  ],
+                  event.name,
+                )
+              })
+          }
+          let restored =
+            events
+            |> list.map(fn(event) {
+              stream.encode_event(stream.Event(
+                event.name,
+                xai_request.restore_event(event.document, handle.refs),
+              ))
+            })
+            |> string.join("")
+          case restored {
+            "" -> next(next_handle)
+            _ -> Ok(Some(#(bit_array.from_string(restored), next_handle)))
+          }
+        }
+        _, Some(Error(_)) -> Error(invalid_response())
+      }
+    }
+  }
 }
 
 /// `/responses` is SSE upstream even when the caller requested a buffered

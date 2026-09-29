@@ -56,10 +56,11 @@ fn flatten(
               )
           }
         }
-        _ ->
-          Error(
-            "Unsupported xAI tool type; only function and namespace are enabled",
-          )
+        // Native hosted tools are not callable client functions and must never
+        // receive a function alias or enter the call/result pairing table.
+        "web_search" | "x_search" if namespace == "" ->
+          flatten(rest, namespace, list.append(tools, [tool]), refs)
+        _ -> Error("Unsupported xAI tool type or namespaced server tool")
       }
     }
   }
@@ -127,8 +128,9 @@ fn available_alias(refs: List(Ref), index: Int) -> String {
 /// Rewrites only named tool call/choice objects, never user text or arguments.
 pub fn wire_call(value: ir.Value, refs: List(Ref)) -> Result(ir.Value, String) {
   use name <- result.try(ir.string_field(value, "name"))
-  let namespace = case ir.optional_string(value, "namespace") {
-    Ok(Some(namespace)) -> namespace
+  use supplied_namespace <- result.try(ir.optional_string(value, "namespace"))
+  let namespace = case supplied_namespace {
+    Some(namespace) -> namespace
     _ -> ""
   }
   case

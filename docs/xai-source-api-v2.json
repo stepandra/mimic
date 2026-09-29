@@ -1,0 +1,65 @@
+{
+  "schema_version": 2,
+  "kind": "source_derived_policy_snapshot",
+  "mimic_base": "3e00808ff0fefbb6728edb1769c17139ef0fd93a",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "raw_snapshot_archive": {
+    "path": "build/xai-native/upstream-v2.tar.gz",
+    "sha256": "cea38656164c6bfc27b9feec5f641833465d75898f8ebe41aa6f96882befa1e4",
+    "manifest": "upstream-v2/MANIFEST.json",
+    "fetched_at_utc_start": "2026-09-29T05:51:49.153071+00:00",
+    "scope": "Public CPA source and official documentation only; no inference or auth endpoint traffic."
+  },
+  "source_url_prefix": "https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/acdace936fa7df2905500c7f5e0a97d683138dea/",
+  "sources": [
+    {"path": "internal/auth/xai/xai.go", "sha256": "0d1efc7ef5cf4d47cb3cf1d94a19a712021877f83e58a3843898c71641eaef0d"},
+    {"path": "internal/auth/xai/types.go", "sha256": "8ee7f76198e8700611bf9367b2e8b1081b442522d4e0dac104f6b8a6a5d47256"},
+    {"path": "internal/auth/xai/token.go", "sha256": "30cefc686af6bfb460a8fd3b1aa88e9a938c79d819f16f2f35c52aa211eeb616"},
+    {"path": "sdk/auth/xai.go", "sha256": "dbe66fc0d52a0a0c5af70b4646f2803e41b278a297d13dc58379e83e6f971f04"},
+    {"path": "internal/runtime/executor/xai_executor_request.go", "sha256": "d8a3af4d9a9997bbdb67fe0c5f4dfba746fa4a36ad08103e06b77093704fb245"},
+    {"path": "internal/runtime/executor/xai_executor_execute.go", "sha256": "5382a5bd27846aec8acc9501f1385155c2789c16cdfc64bd41ad79d97d7f3703"},
+    {"path": "internal/runtime/executor/xai_websockets_executor.go", "sha256": "d71ab69d9dc5a6391f46d93dba3bbebfb73bb288a73675890898455377e6940d"}
+  ],
+  "source_policy": {
+    "public_api_base": "https://api.x.ai/v1",
+    "cli_proxy_base": "https://cli-chat-proxy.grok.com/v1",
+    "oauth_http_default": "cli_proxy",
+    "using_api_true_http_default": "public_api",
+    "using_api_false_default_public_override": "cli_proxy",
+    "compact_default": "public_api",
+    "websocket_default": "public_api",
+    "http_uses_upstream_sse_even_when_buffered": true,
+    "discovery": "https://auth.x.ai/.well-known/openid-configuration",
+    "device_fields": ["client_id", "scope"],
+    "poll_fields": ["grant_type", "device_code", "client_id"],
+    "refresh_fields": ["grant_type", "refresh_token", "client_id"],
+    "scope": "openid profile email offline_access grok-cli:access api:access",
+    "namespace_separator": "__",
+    "client_web_search_alias": "clientfn_web_search",
+    "cpa_namespace_dispatcher_threshold": 200
+  },
+  "official_docs_observations": [
+    {
+      "url": "https://docs.x.ai/developers/rest-api-reference/inference/responses",
+      "snapshot_html_sha256": "0278e10d71c1b5e79534532be1a691229085f52283ad4e48f5e84dedc63c94b4",
+      "observation": "Public Responses and compact; function and web-search tools; documented maximum 350 tools.",
+      "mutable_url": true,
+      "raw_html_retained": true,
+      "archive_member": "upstream-v2/official/responses.html"
+    },
+    {
+      "url": "https://docs.x.ai/build/overview",
+      "snapshot_html_sha256": "738a34fdadd22a1b4add015e8784621d1056801a95eb65960454c8f468dc0649",
+      "observation": "Grok Build first-launch browser authentication; API key recommended for non-browser environments.",
+      "mutable_url": true,
+      "raw_html_retained": true,
+      "archive_member": "upstream-v2/official/grok-build.html"
+    }
+  ],
+  "evidence_limits": [
+    "CPA source implementation is not an official private OAuth/proxy API contract.",
+    "Official documentation URLs are mutable; the raw HTML bytes and per-fetch timestamps are retained in the hashed build artifact, not as vendored production source.",
+    "Public docs inspected did not establish physical WebSocket or the CPA device discovery contract.",
+    "No live inference, OAuth, account scraping, browser automation, TLS fingerprint measurement or model entitlement validation was performed."
+  ]
+}

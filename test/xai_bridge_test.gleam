@@ -94,7 +94,7 @@ pub fn bridge_rejects_origin_mode_model_mismatch_test() {
       body: "{\"model\":\"grok-4.7\",\"input\":\"hello\",\"stream\":true,\"tools\":[]}",
     ),
   )
-  |> should.equal(Error(c.Failure(c.Unsupported, c.NotSent, None)))
+  |> should.be_ok
 }
 
 pub fn refresh_private_metadata_is_preserved_test() {
@@ -134,6 +134,34 @@ pub fn refresh_private_metadata_is_preserved_test() {
       )
     })
   invalid(material, 1000) |> should.equal(Error(c.InvalidGrant))
+}
+
+pub fn compact_rejects_tool_aliases_and_bare_status_never_proves_rejection_test() {
+  let context =
+    c.Context(
+      "xai",
+      "api_key",
+      "synthetic",
+      "https://api.x.ai",
+      "session",
+      c.ApiKey("synthetic"),
+    )
+  bridge.prepare_plan(
+    endpoint.defaults(endpoint.ApiKey),
+    context,
+    c.Request(
+      ..req(),
+      operation: "responses/compact",
+      mode: c.Buffered,
+      required: [c.Tools],
+      body: "{\"model\":\"grok-4.7\",\"input\":[],\"tools\":[{\"type\":\"function\",\"name\":\"web_search\"}]}",
+    ),
+  )
+  |> should.equal(Error(c.Failure(c.Unsupported, c.NotSent, None)))
+  bridge.rejection(401, [])
+  |> should.equal(Some(c.Failure(c.CredentialUnavailable, c.Uncertain, None)))
+  bridge.rejection(429, [])
+  |> should.equal(Some(c.Failure(c.Quota, c.Uncertain, None)))
 }
 
 pub fn api_key_and_oauth_use_actual_loopback_transport_test() {
