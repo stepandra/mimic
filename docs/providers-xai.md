@@ -1,5 +1,9 @@
 # xAI native Responses integration (bounded)
 
+**Current native adapter handoff:** see [xai-native-v2.md](xai-native-v2.md).
+The text below records the original assembled baseline and its restrictions;
+it is retained as historical integration evidence, not the new adapter API.
+
 The frozen xAI17 handoff was imported from
 `build/xai-handoff-v1/source` in the owner workspace. Its manifest SHA-256 is
 `9169c42de7768eb2256e6cf7c772e749bbbe36e425e0c4cd2f97ea743b74369a`;

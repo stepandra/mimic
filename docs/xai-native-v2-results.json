@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "scope": "xai_owned_adapter_handoff",
+  "base": "3e00808ff0fefbb6728edb1769c17139ef0fd93a",
+  "toolchain": "mise exec gleam@1.18.1",
+  "environment": {"ERL_FLAGS": "+S 2:2 +A 2"},
+  "checks": [
+    {
+      "command": "mise exec gleam@1.18.1 -- gleam format --check src test",
+      "exit_code": 0
+    },
+    {
+      "command": "mise exec gleam@1.18.1 -- sh scripts/verify-integration.sh",
+      "exit_code": 0,
+      "gleam_tests_passed": 530,
+      "gleam_failures": 0,
+      "python_tests_passed": 10,
+      "source_scenarios_and_smokes": "passed",
+      "erlang_shipment_export_and_smokes": "passed",
+      "log": "build/xai-native/release-gate.log",
+      "log_sha256": "3a3b4220debadcde5e6cbb3990e23b6b29d17875a60111d740b3ba508f67184c"
+    },
+    {
+      "command": "mise exec gleam@1.18.1 -- gleam run -m xai_native_scenarios",
+      "exit_code": 0,
+      "observation_scope": "xai_native_adapter",
+      "log": "build/xai-native/native-scenarios.log",
+      "log_sha256": "781e95f4752214e686615573b3b385536868896adcf1405046148afd3de527fd"
+    },
+    {
+      "command": "mise exec gleam@1.18.1 -- gleam run -m xai_binding_s3_test",
+      "execution_tree": "generated build-only overlay of xAI worktree plus exact shared-core S3; fixture copied to test/xai_binding_s3_test.gleam",
+      "shared_core_archive_sha256": "f6c39981bd331612b67e5bd21dd582f138facd2767b4479ba09d84a7cf9d85e8",
+      "exit_code": 0,
+      "observation_scope": "xai_shared_s3_binding",
+      "same_oauth_grant_two_explicit_origins": true,
+      "legacy_ws_binding_misuse_rejected": true,
+      "unbound_compact_rejected": true,
+      "log": "build/xai-native/binding-s3.log",
+      "log_sha256": "92a163e6f76b94c7b870ee2683425dfbd76c8e1bd7e5c09793abada8785aafaa"
+    }
+  ],
+  "new_xai_root_gateway_routes_exercised": false,
+  "native_grok_executable_exercised": false,
+  "cpa_differential_exercised": false,
+  "live_provider": false,
+  "synthetic_wire_and_credentials_only": true,
+  "automatic_merge_commit_or_push": false
+}

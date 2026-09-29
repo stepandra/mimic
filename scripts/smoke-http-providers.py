@@ -26,7 +26,7 @@ BASE = runpy.run_path(str(ROOT / "scripts/smoke-gateway.py"))
 CLIENT = BASE["CLIENT_KEY"]
 SECRETS = [CLIENT, "synthetic-old-access", "synthetic-old-refresh",
            "synthetic-new-access", "synthetic-new-refresh", "synthetic-admin-access",
-           "synthetic-kimi-key", "synthetic-device-code"]
+           "synthetic-kimi-key", "synthetic-generic-kimi-key", "synthetic-device-code"]
 MODEL = "synthetic-claude"
 START = 'event: message_start\ndata: {"type":"message_start","message":{"id":"synthetic","usage":{"input_tokens":3}}}\n\n'
 DELTA = 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好🌍"}}\n\n'
@@ -35,6 +35,37 @@ KIMI_MODEL = "kimi-k2.7-code"
 KIMI_RESPONSE = {"id": "resp_synthetic", "object": "response", "model": "kimi-for-coding",
                  "status": "completed", "output": [],
                  "usage": {"input_tokens": 3, "output_tokens": 0, "total_tokens": 3}}
+KIMI_MESSAGES = {
+    "id": "msg_synthetic", "type": "message", "role": "assistant", "model": "kimi-for-coding",
+    "content": [{"type": "thinking", "thinking": "synthetic", "signature": "synthetic-signature"},
+                {"type": "text", "text": "synthetic"}],
+    "stop_reason": "end_turn", "stop_sequence": None,
+    "usage": {"input_tokens": 3, "output_tokens": 1},
+}
+
+
+def kimi_chat_sse(terminal=True):
+    def chunk(delta, finish=None):
+        return {"id": "chat_synthetic", "object": "chat.completion.chunk", "created": 1,
+                "model": "kimi-for-coding",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+                "vendor": {"model": "user-owned-value"}}
+    frames = [
+        chunk({"role": "assistant", "reasoning_content": "想"}),
+        chunk({"content": "你好🌍"}),
+        chunk({"tool_calls": [{"index": 0, "id": "call_synthetic", "type": "function",
+                              "function": {"name": "lookup", "arguments": "{\"q\":"}}]}),
+        chunk({"tool_calls": [{"index": 0, "function": {"arguments": "\"x\"}"}}]}),
+    ]
+    if terminal:
+        frames.extend([
+            chunk({}, "tool_calls"),
+            {"id": "chat_synthetic", "object": "chat.completion.chunk", "created": 1,
+             "model": "kimi-for-coding", "choices": [],
+             "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}},
+        ])
+    output = "".join("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n" for frame in frames)
+    return output + ("data: [DONE]\n\n" if terminal else "")
 
 
 def kimi_sse(terminal=True):
@@ -100,15 +131,57 @@ class Upstream(BaseHTTPRequestHandler):
         if self.server.status != 200:
             self.reply(self.server.status, '{"error":{"type":"synthetic_rejection"}}')
             return
+        if self.path == "/operator/generic/v1/chat/completions":
+            self.reply(200, json.dumps({
+                "id": "chat_generic", "object": "chat.completion", "model": body["model"],
+                "choices": [{"index": 0, "message": {"role": "assistant",
+                                                    "content": "generic synthetic"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "vendor": {"model": "user-owned-value"},
+            }))
+            return
         if "/operator/kimi/" in self.path:
             if self.path.endswith("/chat/completions"):
-                self.reply(200, json.dumps({
-                    "id": "chat_synthetic", "object": "chat.completion",
-                    "model": "kimi-for-coding", "choices": [
-                        {"index": 0, "message": {"role": "assistant", "content": "synthetic"},
-                         "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
-                }))
+                if body.get("stream"):
+                    payload = kimi_chat_sse(self.server.stream_mode == "good")
+                    if self.server.stream_mode == "malformed":
+                        payload += "data: {broken}\n\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    try:
+                        # Exercise the real gateway's byte/UTF-8 boundaries, not
+                        # an already-decoded fixture callback.
+                        for byte in payload.encode():
+                            self.wfile.write(b"1\r\n" + bytes([byte]) + b"\r\n")
+                        self.wfile.flush()
+                        if self.server.stream_mode == "cancel":
+                            for _ in range(1000):
+                                heartbeat = (
+                                    b'data: {"id":"chat_synthetic","object":"chat.completion.chunk",'
+                                    b'"model":"kimi-for-coding","choices":[{"index":0,"delta":'
+                                    b'{"content":"synthetic"},"finish_reason":null}]}\n\n')
+                                self.wfile.write(f"{len(heartbeat):x}\r\n".encode()
+                                                 + heartbeat + b"\r\n")
+                                self.wfile.flush()
+                                time.sleep(0.01)
+                            raise AssertionError("Kimi Chat upstream not cancelled")
+                        self.wfile.write(b"0\r\n\r\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        self.server.cancel_seen.set()
+                else:
+                    self.reply(200, json.dumps({
+                        "id": "chat_synthetic", "object": "chat.completion",
+                        "model": "kimi-for-coding", "choices": [
+                            {"index": 0, "message": {"role": "assistant", "content": "synthetic"},
+                             "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+                    }))
+            elif self.path.endswith("/messages?beta=true"):
+                self.reply(200, json.dumps(KIMI_MESSAGES))
             elif body.get("stream"):
                 payload = kimi_sse(self.server.stream_mode == "good")
                 if self.server.stream_mode == "malformed":
@@ -502,20 +575,52 @@ def kimi_checks(flow, mode, domain):
             ambiguous_http_denied(flow.port, payload, "/v1/responses")
             assert len(upstream.requests) == before
             status, raw, _ = call(flow.port, payload, "/v1/responses")
-            assert status == 200 and json.loads(raw) == KIMI_RESPONSE
+            assert status == 200 and json.loads(raw) == dict(KIMI_RESPONSE, model=KIMI_MODEL)
             streaming = dict(payload, stream=True)
             status, raw, incomplete = call(flow.port, streaming, "/v1/responses")
             assert status == 200 and "event: response.completed" in raw and not incomplete
             chat = {"model": KIMI_MODEL, "messages": [{"role": "user", "content": "synthetic"}]}
             status, raw, _ = call(flow.port, chat, "/v1/chat/completions")
             assert status == 200 and json.loads(raw)["choices"][0]["message"]["content"] == "synthetic"
+            assert json.loads(raw)["model"] == KIMI_MODEL
+            tools = [{"type": "function", "function": {"name": "lookup",
+                      "parameters": {"properties": {"q": {"type": "string"}}}}}]
+            history = [
+                {"role": "user", "content": "synthetic"},
+                {"role": "assistant", "content": "", "reasoning_content": "retain reasoning",
+                 "tool_calls": [{"id": "prior_call", "type": "function",
+                                 "function": {"name": "lookup", "arguments": "{\"q\":\"prior\"}"}}]},
+                {"role": "tool", "tool_call_id": "prior_call", "content": "synthetic result"},
+            ]
+            tool_chat = dict(chat, tools=tools, messages=history)
+            status, raw, _ = call(flow.port, tool_chat, "/v1/chat/completions")
+            assert status == 200 and json.loads(raw)["model"] == KIMI_MODEL
+            planned = upstream.requests[-1][2]
+            assert planned["messages"] == history
+            assert planned["tools"][0]["function"]["parameters"]["type"] == "object"
+            chat_streaming = dict(tool_chat, stream=True)
+            status, raw, incomplete = call(flow.port, chat_streaming, "/v1/chat/completions")
+            assert status == 200 and not incomplete and "data: [DONE]" in raw
+            chunks = [json.loads(line[6:]) for line in raw.splitlines()
+                      if line.startswith("data: ") and line != "data: [DONE]"]
+            assert all(chunk["model"] == KIMI_MODEL for chunk in chunks)
+            assert chunks[0]["vendor"]["model"] == "user-owned-value"
+            assert chunks[0]["choices"][0]["delta"]["reasoning_content"] == "想"
+            assert chunks[1]["choices"][0]["delta"]["content"] == "你好🌍"
+            assert chunks[-1]["usage"]["total_tokens"] == 7
+            assert upstream.requests[-1][2]["stream_options"]["include_usage"] is True
+            messages = dict(chat, max_tokens=16)
+            status, raw, _ = call(flow.port, messages, "/v1/messages")
+            assert status == 200 and json.loads(raw) == dict(KIMI_MESSAGES, model=KIMI_MODEL)
+            assert upstream.requests[-1][0] == "/operator/kimi/v1/messages?beta=true"
+            assert call(flow.port, dict(payload, tools=[]), "/v1/responses")[0] == 200
             before = len(upstream.requests)
             for path, rejected in [
-                ("/v1/chat/completions", dict(chat, stream=True)),
-                ("/v1/responses", dict(payload, tools=[])),
+                ("/v1/chat/completions", dict(chat, audio={"format": "wav", "voice": "synthetic"})),
+                ("/v1/responses", dict(payload, tools=[{"type": "custom", "name": "unsupported"}])),
                 ("/v1/responses", dict(payload, previous_response_id="unscoped")),
                 ("/v1/responses/compact", payload),
-                ("/v1/messages", dict(chat, max_tokens=16)),
+                ("/v1/messages", dict(messages, stream=True)),
             ]:
                 assert call(flow.port, rejected, path)[0] == 422
                 assert len(upstream.requests) == before
@@ -524,10 +629,15 @@ def kimi_checks(flow, mode, domain):
                 status, raw, incomplete = call(flow.port, streaming, "/v1/responses", allow_incomplete=True)
                 assert status == 200 and "event: response.created" in raw
                 assert "event: response.completed" not in raw and incomplete
+                status, raw, incomplete = call(flow.port, chat_streaming, "/v1/chat/completions",
+                                               allow_incomplete=True)
+                assert status == 200 and "data: " in raw and incomplete
+                assert "data: [DONE]" not in raw
             upstream.stream_mode = "good"
     assert len(upstream.tokens) == (1 if mode == "oauth" else 0)
     for path, headers, body in upstream.requests:
-        assert path in ("/operator/kimi/v1/responses", "/operator/kimi/v1/chat/completions")
+        assert path in ("/operator/kimi/v1/responses", "/operator/kimi/v1/chat/completions",
+                        "/operator/kimi/v1/messages?beta=true")
         assert headers["Host"] == flow.origin.removeprefix("http://")
         assert headers["Authorization"] == ("Bearer synthetic-new-access" if mode == "oauth"
                                             else "Bearer synthetic-kimi-key")
@@ -571,16 +681,20 @@ def kimi_checks(flow, mode, domain):
         flow.seed(expired=False)
     with flow.running():
         upstream.stream_mode = "cancel"
-        upstream.cancel_seen.clear()
-        connection = http.client.HTTPConnection("127.0.0.1", flow.port, timeout=10)
-        connection.request("POST", "/v1/responses", json.dumps(dict(payload, stream=True)), {
-            "Authorization": f"Bearer {CLIENT}", "Content-Type": "application/json",
-        })
-        response = connection.getresponse()
-        assert response.read(16).startswith(b"event: response.")
-        response.close()
-        connection.close()
-        assert upstream.cancel_seen.wait(5)
+        for path, streaming_body, prefix in [
+            ("/v1/responses", dict(payload, stream=True), b"event: response."),
+            ("/v1/chat/completions", chat_streaming, b"data: "),
+        ]:
+            upstream.cancel_seen.clear()
+            connection = http.client.HTTPConnection("127.0.0.1", flow.port, timeout=10)
+            connection.request("POST", path, json.dumps(streaming_body), {
+                "Authorization": f"Bearer {CLIENT}", "Content-Type": "application/json",
+            })
+            response = connection.getresponse()
+            assert response.read(16).startswith(prefix)
+            response.close()
+            connection.close()
+            assert upstream.cancel_seen.wait(5)
         upstream.stream_mode = "good"
         for status in (401, 429):
             upstream.status = status
@@ -596,6 +710,66 @@ def kimi_checks(flow, mode, domain):
         flow.cli("key", "revoke", str(flow.config), "client")
         assert call(flow.port, payload, "/v1/responses")[0] == 401
         assert len(upstream.requests) == before
+
+
+def generic_kimi_checks(flow):
+    """Distinct native/generic registry identities in either account order."""
+    model = "synthetic-generic-kimi"
+    settings = json.loads(flow.config.read_text())
+    native = {"provider": "kimi", "auth_mode": "api_key", "id": "selected",
+              "origin": flow.origin, "base_path": "/operator/kimi", "models": [KIMI_MODEL]}
+    generic = {"provider": "openai-compatible-kimi", "auth_mode": "api_key",
+               "id": "generic", "origin": flow.origin, "models": [model],
+               "base_path": "/operator/generic/v1"}
+    absent = dict(generic, id="generic-absent", origin="http://127.0.0.1:1", base_path="/wrong")
+    settings["accounts"] = [native, absent, generic]
+    flow.config.write_text(json.dumps(settings))
+    for account, token in [("selected", "synthetic-kimi-key"),
+                           ("generic", "synthetic-generic-kimi-key")]:
+        path = private(flow.directory / account, json.dumps({"api_key": token}))
+        flow.cli("credential", "import", str(flow.config), account, path)
+    payload = {
+        "model": model, "messages": [{"role": "user", "content": "synthetic"}],
+        "temperature": 0.2, "vendor": {"model": "user-owned-value"},
+        "tools": [{"type": "function", "function": {"name": "lookup",
+                  "parameters": {"type": "object", "properties": {}}}}],
+    }
+    for accounts in ([native, absent, generic], [absent, generic, native]):
+        settings["accounts"] = accounts
+        flow.config.write_text(json.dumps(settings))
+        with flow.running():
+            before = len(flow.upstream.requests)
+            assert call(flow.port, payload, "/v1/chat/completions", key="wrong")[0] == 401
+            assert len(flow.upstream.requests) == before
+            status, raw, _ = call(flow.port, payload, "/v1/chat/completions")
+            assert status == 200 and json.loads(raw)["model"] == model
+            assert json.loads(raw)["vendor"]["model"] == "user-owned-value"
+            path, headers, planned = flow.upstream.requests[-1]
+            assert path == "/operator/generic/v1/chat/completions"
+            assert planned == payload  # No native aliases, thinking or temperature conversion.
+            assert headers["Authorization"] == "Bearer synthetic-generic-kimi-key"
+            assert headers["Host"] == flow.origin.removeprefix("http://")
+            assert "X-Msh-Device-Id" not in headers and CLIENT not in str(headers)
+            native_body = {"model": KIMI_MODEL, "messages": payload["messages"]}
+            status, raw, _ = call(flow.port, native_body, "/v1/chat/completions")
+            assert status == 200 and json.loads(raw)["model"] == KIMI_MODEL
+            assert flow.upstream.requests[-1][1]["Authorization"] == "Bearer synthetic-kimi-key"
+            before = len(flow.upstream.requests)
+            for route, rejected in [
+                ("/v1/chat/completions", dict(payload, stream=True)),
+                ("/v1/chat/completions", dict(payload, previous_response_id="unscoped")),
+                ("/v1/responses", {"model": model, "input": "synthetic"}),
+                ("/v1/messages", dict(payload, max_tokens=16)),
+            ]:
+                assert call(flow.port, rejected, route)[0] == 422
+                assert len(flow.upstream.requests) == before
+    invalid = dict(settings, accounts=[dict(generic, auth_mode="oauth")])
+    invalid_path = private(flow.directory / "invalid-generic.json", json.dumps(invalid))
+    rejected = subprocess.run([*flow.command, "providers", "credential", "status",
+                               str(invalid_path), "generic"],
+                              cwd=flow.cwd, capture_output=True, timeout=60)
+    assert rejected.returncode != 0
+    assert not any(secret.encode() in rejected.stdout + rejected.stderr for secret in SECRETS)
 
 
 def main():
@@ -623,11 +797,21 @@ def main():
                 kimi_checks(flow, mode, domain)
             finally:
                 flow.close()
+    with tempfile.TemporaryDirectory(prefix="kimi-generic-", dir=ROOT / "build/integration") as temp:
+        directory = Path(temp)
+        directory.chmod(0o700)
+        flow = Workflow(directory, command, args.shipment)
+        try:
+            generic_kimi_checks(flow)
+        finally:
+            flow.close()
     print(json.dumps({
         "scope": "assembled_http_provider_cli", "synthetic": True,
         "claude_oauth_sse": True, "refresh_singleflight_restart_cas": True,
         "claude_configured_pkce_login": True,
         "kimi_native_chat_responses_sse_device_refresh_restart": True,
+        "kimi_chat_tools_history_model_restore_and_messages": True,
+        "kimi_native_generic_registry_and_credential_isolation": True,
         "byte_boundaries_prefix_cancel": True, "live_provider": False,
         "shipment": bool(args.shipment),
     }))

@@ -1,0 +1,106 @@
+/// Compile as test/xai_binding_s3_test.gleam ONLY with shared-core S3.
+/// Synthetic selected-origin binding test, not assembled gateway parity.
+import gleam/erlang/process
+import gleam/io
+import gleam/option.{None, Some}
+import gleeunit/should
+import mimic/auth
+import mimic/auth/runtime as credentials
+import mimic/auth/runtime_store
+import mimic/auth/storage
+import mimic/fleet
+import mimic/providers/contracts as c
+import mimic/providers/registry
+import mimic/providers/runtime
+import mimic/providers/xai/adapter
+import mimic/providers/xai/bridge
+import mimic/providers/xai/endpoint
+import mimic/providers/xai/models
+import mimic/providers/xai/oauth
+import mimic/providers/xai_websocket
+import xai_adapter_test
+import xai_websocket_native_test
+
+@external(erlang, "mimic_auth_test_ffi", "state_directory")
+fn state_directory() -> String
+
+pub fn explicit_protocol_origins_share_one_oauth_grant_test() {
+  let http = xai_adapter_test.tool_peer(200)
+  let ws = xai_websocket_native_test.peer(None, "normal")
+  let assert Ok(store) = storage.new(state_directory())
+  let key = credentials.key("xai", "oauth", "one-grant")
+  let material = c.OAuth(c.OAuthData(
+    auth.Credential("synthetic-one-grant", "synthetic-refresh", 9_000_000_000_000),
+    [#("token_endpoint", http.1 <> "/token")],
+  ))
+  runtime_store.save(store, key, material) |> should.be_ok
+  let config = endpoint.Config(
+    ..endpoint.defaults(endpoint.DeviceOAuth),
+    websockets: True,
+    policy: endpoint.LocalMock,
+  )
+  let assert Ok(model) = models.registration_for("grok-4.7", config)
+  let assert Ok(catalog) = registry.new([model])
+  let policy = bridge.oauth_policy(
+    oauth.Config(http.1 <> "/discovery", endpoint.LocalMock),
+    fn(_) { panic as "fresh synthetic grant must not refresh" },
+  )
+  let assert Ok(pool) = runtime.start_with_bindings(
+    store,
+    catalog,
+    [runtime.Account("xai", "oauth", "one-grant", http.1, fleet.LocalLoopback, 1, ["grok-4.7"], policy)],
+    [
+      runtime.EndpointBinding("xai", "oauth", "one-grant", "responses", "responses", http.1, fleet.LocalLoopback),
+      runtime.EndpointBinding("xai", "oauth", "one-grant", "responses", "responses/websocket", ws.1, fleet.LocalLoopback),
+    ],
+  )
+  let body = "{\"model\":\"grok-4.7\",\"input\":[],\"tools\":[{\"type\":\"function\",\"name\":\"web_search\"}]}"
+  let request = c.Request(
+    "xai", "oauth", "grok-4.7", "responses", "responses", c.Buffered,
+    [c.Tools], "synthetic-client", Some("one-grant"), body,
+  )
+  let assert Ok(opened) = runtime.open(pool, adapter.selected_http(config, None), request)
+  adapter.collect(opened, "responses") |> should.be_ok
+  process.receive(http.2, 1000)
+  |> should.equal(Ok(#(Ok("Bearer synthetic-one-grant"), "clientfn_web_search")))
+  let socket_adapter = xai_websocket.selected_adapter("tenant", config, None)
+  let create = "{\"type\":\"response.create\",\"model\":\"grok-4.7\",\"input\":[],\"tools\":[{\"type\":\"namespace\",\"name\":\"shell\",\"tools\":[{\"type\":\"function\",\"name\":\"run\"}]}]}"
+  let socket_request = c.Request(
+    ..xai_websocket_native_test.req("oauth", create),
+    session: request.session,
+    pinned_account: Some("one-grant"),
+  )
+  // Legacy label selects HTTP binding but cannot upgrade/send to that host.
+  runtime.open_session(
+    pool, socket_adapter,
+    c.Request(..socket_request, operation: "responses"),
+  ) |> should.be_error
+  process.receive(http.2, 0) |> should.be_error
+  process.receive(ws.2, 0) |> should.be_error
+  let assert Ok(session) = runtime.open_session(pool, socket_adapter, socket_request)
+  runtime.session_send(session, socket_request) |> should.be_ok
+  xai_websocket_native_test.drain_session(session, 100)
+  process.receive(ws.2, 1000) |> should.equal(Ok("Bearer synthetic-one-grant"))
+  process.receive(ws.2, 1000) |> should.equal(Ok("/v1/responses"))
+  process.receive(ws.2, 1000) |> should.be_ok
+  runtime.session_cancel(session)
+  process.receive(ws.3, 1000) |> should.be_ok
+  // Exclusive bindings do not inherit unconfigured compact from account.origin.
+  runtime.open(
+    pool, adapter.selected_http(config, None),
+    c.Request(..request, operation: "responses/compact", body: "{\"model\":\"grok-4.7\",\"input\":[]}"),
+  ) |> should.be_error
+  process.receive(http.2, 0) |> should.be_error
+  process.receive(ws.2, 0) |> should.be_error
+  runtime.active_leases(pool) |> should.equal(Ok(0))
+  runtime.stop(pool) |> should.be_ok
+  process.unlink(http.0.pid)
+  process.send_exit(http.0.pid)
+  process.unlink(ws.0.pid)
+  process.send_exit(ws.0.pid)
+}
+
+pub fn main() {
+  explicit_protocol_origins_share_one_oauth_grant_test()
+  io.println("{\"scope\":\"xai_shared_s3_binding\",\"synthetic\":true,\"same_oauth_grant_two_explicit_origins\":true,\"legacy_ws_binding_misuse_rejected\":true,\"unbound_compact_rejected\":true,\"assembled_ingress_exercised\":false,\"live_provider\":false}")
+}

@@ -10,7 +10,9 @@ import mimic/dialect/responses
 import mimic/egress
 import mimic/ir
 import mimic/providers/contracts
+import mimic/providers/kimi/messages
 import mimic/providers/kimi/models
+import mimic/providers/kimi/transform
 import mimic/providers/transport
 import mimic/types.{type Capture, type Header, Capture, Header, Transport}
 
@@ -83,7 +85,10 @@ pub fn prepare_at(
   use _ <- result.try(
     case
       list.any(request.required, fn(capability) {
-        capability != contracts.Buffer && capability != contracts.Stream
+        capability != contracts.Buffer
+        && capability != contracts.Stream
+        && capability != contracts.Tools
+        && capability != contracts.Images
       })
       || request.pinned_account != None
     {
@@ -94,10 +99,24 @@ pub fn prepare_at(
   use body <- result.try(case request.protocol, request.operation {
     "responses", "responses" -> responses_body(request, model)
     "chat", "chat/completions" -> chat_body(request, model)
+    "anthropic", "messages" ->
+      case request.mode {
+        contracts.Buffered ->
+          messages.prepare(request.body, request.model, False)
+          |> result.map_error(fn(_) {
+            contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+          })
+        contracts.Streaming -> unsupported()
+      }
     _, _ -> unsupported()
   })
+  let base_path = case string.ends_with(base_path, "/v1") {
+    True -> string.drop_end(base_path, 3)
+    False -> base_path
+  }
   let target = case request.protocol {
     "responses" -> base_path <> "/v1/responses"
+    "anthropic" -> base_path <> "/v1/messages?beta=true"
     _ -> base_path <> "/v1/chat/completions"
   }
   let accept = case request.mode {
@@ -132,7 +151,10 @@ pub fn prepare_at(
       Header("Accept", accept),
       Header("Accept-Encoding", "identity"),
       Header("Content-Length", int.to_string(string.byte_size(body))),
-      ..device_headers
+      ..list.append(device_headers, case request.protocol {
+        "anthropic" -> [Header("anthropic-version", "2023-06-01")]
+        _ -> []
+      })
     ],
     body,
     Transport("http/1.1", None),
@@ -176,34 +198,22 @@ fn responses_body(
       False -> invalid()
     },
   )
-  // Native passthrough is limited to text input. Provider-specific thinking,
-  // temperature and tool normalization cannot silently be skipped.
-  use _ <- result.try(
-    case
-      fields_only(decoded.document, [
-        "model",
-        "input",
-        "instructions",
-        "stream",
-        "max_output_tokens",
-      ])
-      && text_input(ir.field(decoded.document, "input"))
-    {
-      True -> Ok(Nil)
-      False -> unsupported()
-    },
+  let _ = model
+  transform.request(
+    request.body,
+    request.model,
+    "responses",
+    request.mode == contracts.Streaming,
   )
-  Ok(ir.stringify(replace_model(decoded.document, model)))
+  |> result.map_error(fn(_) {
+    contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+  })
 }
 
 fn chat_body(
   request: contracts.Request,
   model: String,
 ) -> Result(String, contracts.Failure) {
-  use _ <- result.try(case request.mode {
-    contracts.Buffered -> Ok(Nil)
-    contracts.Streaming -> unsupported()
-  })
   use value <- result.try(ir.parse(request.body) |> as_invalid())
   use _ <- result.try(ir.as_object(value) |> as_invalid())
   use named <- result.try(ir.string_field(value, "model") |> as_invalid())
@@ -225,55 +235,16 @@ fn chat_body(
       False -> invalid()
     },
   )
-  use _ <- result.try(
-    case
-      fields_only(value, ["model", "messages", "stream", "max_tokens"])
-      && list.all(messages, simple_message)
-    {
-      True -> Ok(Nil)
-      False -> unsupported()
-    },
+  let _ = model
+  transform.request(
+    request.body,
+    request.model,
+    "chat",
+    request.mode == contracts.Streaming,
   )
-  Ok(ir.stringify(replace_model(value, model)))
-}
-
-fn simple_message(value: ir.Value) -> Bool {
-  case ir.field(value, "role"), ir.field(value, "content") {
-    Some(ir.String(role)), Some(ir.String(_)) ->
-      list.contains(["system", "developer", "user", "assistant"], role)
-      && fields_only(value, ["role", "content"])
-    _, _ -> False
-  }
-}
-
-fn text_input(input: Option(ir.Value)) -> Bool {
-  case input {
-    Some(ir.String(_)) -> True
-    _ -> False
-  }
-}
-
-fn fields_only(value: ir.Value, allowed: List(String)) -> Bool {
-  case value {
-    ir.Object(fields) ->
-      list.all(fields, fn(field) { list.contains(allowed, field.0) })
-    _ -> False
-  }
-}
-
-fn replace_model(value: ir.Value, model: String) -> ir.Value {
-  case value {
-    ir.Object(fields) ->
-      ir.Object(
-        list.map(fields, fn(field) {
-          case field.0 {
-            "model" -> #("model", ir.String(model))
-            _ -> field
-          }
-        }),
-      )
-    _ -> value
-  }
+  |> result.map_error(fn(_) {
+    contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+  })
 }
 
 fn origin_host(origin: String) -> Result(String, contracts.Failure) {

@@ -6,6 +6,7 @@ import gleam/string
 import gleam/uri
 import mimic/ir
 import mimic/providers/devin/identity
+import mimic/providers/devin/tokens
 
 pub type Pkce {
   Pkce(verifier: String, challenge: String, state: String)
@@ -152,5 +153,5 @@ pub fn exchange_token(body: String) -> Result(String, String) {
 
 /// CPA CountTokens is a byte-length heuristic, not a measured tokenizer.
 pub fn estimated_tokens(payload: String) -> Int {
-  bit_array.byte_size(bit_array.from_string(payload)) / 4
+  tokens.estimate(payload).input_tokens
 }

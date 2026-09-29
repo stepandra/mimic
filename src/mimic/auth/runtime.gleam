@@ -30,6 +30,7 @@ pub opaque type Worker {
 
 type Message {
   Get(process.Subject(Result(AuthMaterial, Failure)))
+  GetVersioned(process.Subject(Result(#(AuthMaterial, Revision), Failure)))
 }
 
 type State {
@@ -120,37 +121,75 @@ pub fn acquire(worker: Worker) -> Result(AuthMaterial, Failure) {
   answer |> result.unwrap(Error(Failure(CredentialUnavailable, NotSent, None)))
 }
 
+/// A trusted generation for scoped sessions/receipts; never derive it from a
+/// token or expose it to clients. Admin saves with unchanged tokens still rotate
+/// this revision. A concurrent replacement between acquisition and validation
+/// fails closed, rather than pairing old material with a new generation.
+pub fn acquire_versioned(
+  worker: Worker,
+) -> Result(#(AuthMaterial, Revision), Failure) {
+  let reply = process.new_subject()
+  let monitor = process.monitor(worker.pid)
+  let selector =
+    process.new_selector()
+    |> process.select_map(reply, fn(value) { value })
+    |> process.select_specific_monitor(monitor, fn(_) {
+      Error(Failure(CredentialUnavailable, NotSent, None))
+    })
+  process.send(worker.subject, GetVersioned(reply))
+  let answer = process.selector_receive(selector, 15_000)
+  process.demonitor_process(monitor)
+  answer |> result.unwrap(Error(Failure(CredentialUnavailable, NotSent, None)))
+}
+
 fn handle(state: State, message: Message) -> actor.Next(State, Message) {
-  let Get(reply) = message
   let #(next, value) = acquire_state(state)
-  process.send(reply, value)
+  case message {
+    Get(reply) -> process.send(reply, value)
+    GetVersioned(reply) -> {
+      let versioned = {
+        use material <- result.try(value)
+        use record <- result.try(
+          runtime_store.load_record(next.store, next.key)
+          |> result.replace_error(Failure(CredentialUnavailable, NotSent, None)),
+        )
+        case
+          runtime_store.record_material(record) == material
+          && next.seen == Some(runtime_store.revision(record))
+          && runtime_store.record_status(record) == Ready
+        {
+          True -> Ok(#(material, runtime_store.revision(record)))
+          False -> Error(Failure(CredentialUnavailable, NotSent, None))
+        }
+      }
+      process.send(reply, versioned)
+    }
+  }
   actor.continue(next)
 }
 
 fn acquire_state(state: State) -> #(State, Result(AuthMaterial, Failure)) {
   case state.policy {
-    StaticSession -> {
-      let value = case runtime_store.load(state.store, state.key) {
-        Ok(SessionToken(token, metadata)) -> Ok(SessionToken(token, metadata))
-        _ -> Error(Nil)
+    StaticSession | StaticKey ->
+      case runtime_store.load_record(state.store, state.key) {
+        Ok(record) -> {
+          let material = runtime_store.record_material(record)
+          case state.policy, material {
+            StaticSession, SessionToken(_, _) | StaticKey, ApiKey(_) -> #(
+              State(..state, seen: Some(runtime_store.revision(record))),
+              Ok(material),
+            )
+            _, _ -> #(
+              state,
+              Error(Failure(CredentialUnavailable, NotSent, None)),
+            )
+          }
+        }
+        Error(_) -> #(
+          state,
+          Error(Failure(CredentialUnavailable, NotSent, None)),
+        )
       }
-      #(
-        state,
-        value
-          |> result.replace_error(Failure(CredentialUnavailable, NotSent, None)),
-      )
-    }
-    StaticKey -> {
-      let value = case runtime_store.load(state.store, state.key) {
-        Ok(ApiKey(secret)) -> Ok(ApiKey(secret))
-        _ -> Error(Nil)
-      }
-      #(
-        state,
-        value
-          |> result.replace_error(Failure(CredentialUnavailable, NotSent, None)),
-      )
-    }
     Refreshable(refresh) -> oauth_acquire(state, refresh)
   }
 }

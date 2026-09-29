@@ -1,0 +1,80 @@
+{
+  "schema": "mimic-claude-policy-v1",
+  "synthetic": true,
+  "cpa_source_pin": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "executed_cpa_differential": false,
+  "comparison": {
+    "body": "JSON values and array order exact; object order ignored except generated cache_control type,ttl order",
+    "headers": "anthropic-beta order exact; auth checked privately, never exported",
+    "volatile": ["x-client-request-id"],
+    "stable_scoped": ["X-Claude-Code-Session-Id", "metadata.user_id.device_id", "metadata.user_id.account_uuid", "metadata.user_id.session_id"],
+    "do_not_mask": ["model", "thinking", "tools", "messages", "cache_control", "usage", "anthropic-beta"],
+    "cpa_configuration": "Explicit caller-owned/non-cloaked fingerprint policy; a CLI-cloaked run is a different case, not equivalent."
+  },
+  "cases": [
+    {
+      "id": "native-forced-tool",
+      "input_policy": "NativeMessages/Conversation/PreserveCache",
+      "auth": "api_key",
+      "operation": "messages",
+      "input": {
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": "synthetic"}],
+        "thinking": {"type": "adaptive"},
+        "tool_choice": {"type": "tool", "name": "synthetic"},
+        "output_config": {"effort": "high", "format": {"type": "json_schema"}, "future": true}
+      },
+      "expected": {
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": "synthetic"}],
+        "tool_choice": {"type": "tool", "name": "synthetic"},
+        "output_config": {"format": {"type": "json_schema"}, "future": true}
+      },
+      "expected_betas": []
+    },
+    {
+      "id": "translated-default-cache",
+      "input_policy": "TranslatedMessages/Conversation/DefaultFiveMinutes",
+      "auth": "api_key",
+      "operation": "messages",
+      "input": {
+        "model": "claude-opus-4-6",
+        "system": "synthetic system",
+        "temperature": 1,
+        "top_p": 0.99,
+        "messages": [{"role": "user", "content": "λ"}]
+      },
+      "expected": {
+        "model": "claude-opus-4-6",
+        "system": [{"type": "text", "text": "synthetic system", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "λ", "cache_control": {"type": "ephemeral"}}]}]
+      },
+      "expected_betas": []
+    },
+    {
+      "id": "translated-count-profile",
+      "input_policy": "TranslatedMessages/Conversation/PreserveCache",
+      "auth": "api_key",
+      "operation": "messages/count_tokens",
+      "input": {
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": "synthetic"}],
+        "max_tokens": 5,
+        "metadata": {"synthetic": true},
+        "betas": ["future-a", "effort-2025-11-24", "extended-cache-ttl-2025-04-11", "future-a"]
+      },
+      "expected": {
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": "synthetic"}]
+      },
+      "expected_betas": ["claude-code-20250219", "interleaved-thinking-2025-05-14", "context-management-2025-06-27", "token-counting-2024-11-01", "future-a"],
+      "intentional_difference": "MIMIC explicitly selects the pinned count profile in translated mode; CPA caller-owned mode can retain incoming managed flags."
+    }
+  ],
+  "intentional_divergences": [
+    "MIMIC rejects more than four explicit cache markers and 5m-before-1h order; CPA may remove markers or downgrade TTL.",
+    "MIMIC never synthesizes CLI identity, CCH signatures, device pools, diagnostics, billing tags, tool aliases, model fallbacks, or a native fingerprint.",
+    "MIMIC one-hour injection requires ApprovedOneHour plus selected OAuth; API-key explicit valid one-hour markers remain caller-owned.",
+    "Unknown model IDs pass through without inferred capability flags or catalog claims."
+  ]
+}

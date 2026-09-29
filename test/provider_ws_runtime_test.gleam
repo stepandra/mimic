@@ -328,7 +328,7 @@ fn restart(store: storage.Store, attempts: Int) -> runtime.Runtime {
 }
 
 pub fn static_credential_rotation_and_deletion_before_next_send_never_replay_test() {
-  list.each(["rotate", "delete"], fn(change) {
+  list.each(["rotate", "same-token-save", "delete"], fn(change) {
     let #(store, value) = static_runtime()
     let events = process.new_subject()
     let assert Ok(session) =
@@ -337,6 +337,9 @@ pub fn static_credential_rotation_and_deletion_before_next_send_never_replay_tes
     let key = credentials.key("synthetic-ws", "key", "a")
     case change {
       "delete" -> runtime_store.delete(store, key) |> should.be_ok
+      "same-token-save" ->
+        runtime_store.save(store, key, ApiKey("synthetic-original"))
+        |> should.be_ok
       _ ->
         runtime_store.save(store, key, ApiKey("synthetic-rotated"))
         |> should.be_ok

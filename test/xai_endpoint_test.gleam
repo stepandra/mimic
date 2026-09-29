@@ -20,6 +20,12 @@ pub fn origins_are_explicit_test() {
     xai.select(xai.Config(..oauth, using_api: True), xai.Responses)
   official.url |> should.equal(api_plan.url)
   official.proxy_identity |> should.be_false
+  let assert Ok(default_override) =
+    xai.select(
+      xai.Config(..oauth, http_base: Some(xai.api_base)),
+      xai.Responses,
+    )
+  default_override.url |> should.equal(proxy.url)
 }
 
 pub fn websocket_selection_test() {
@@ -49,6 +55,15 @@ pub fn overrides_do_not_cross_transports_test() {
   xai.select(
     xai.Config(..config, compact_base: Some(xai.proxy_base)),
     xai.Compact,
+  )
+  |> should.be_error
+  xai.select(
+    xai.Config(
+      ..config,
+      websockets: True,
+      websocket_base: Some("https://CLI-CHAT-PROXY.GROK.COM/another-path"),
+    ),
+    xai.WebSocket,
   )
   |> should.be_error
 }
