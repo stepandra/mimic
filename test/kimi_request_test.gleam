@@ -112,7 +112,7 @@ pub fn unsupported_transforms_and_mode_mismatch_fail_before_io_test() {
       "api_key",
       "responses",
       "responses",
-      "{\"model\":\"kimi-k2.8\",\"input\":\"synthetic\",\"tools\":[]}",
+      "{\"model\":\"kimi-k2.8\",\"input\":\"synthetic\",\"audio\":{}}",
     )
   kimi_request.prepare(context, tools)
   |> should.equal(
@@ -138,7 +138,13 @@ pub fn unsupported_transforms_and_mode_mismatch_fail_before_io_test() {
 pub fn registration_does_not_invent_models_or_capabilities_test() {
   let assert Ok(model) = models.registration("kimi-k3-256k")
   model.auth_modes |> should.equal(["api_key", "oauth"])
-  model.capabilities |> should.equal([contracts.Buffer, contracts.Stream])
+  model.capabilities
+  |> should.equal([
+    contracts.Buffer,
+    contracts.Stream,
+    contracts.Tools,
+    contracts.Images,
+  ])
   models.registration("unknown-model") |> should.be_error
   models.upstream_id("kimi-k2.7-code-highspeed")
   |> should.equal(Some("kimi-for-coding-highspeed"))

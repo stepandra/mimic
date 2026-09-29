@@ -1,0 +1,244 @@
+{
+  "scope": "synthetic-kimi-loopback-http-1.1",
+  "mode": "api_key",
+  "domain": null,
+  "upstream": [
+    {
+      "http_version": "HTTP/1.1",
+      "method": "POST",
+      "path": "/operator/kimi/v1/responses",
+      "headers": [
+        [
+          "Host",
+          "127.0.0.1:<loopback-port>"
+        ],
+        [
+          "Authorization",
+          "[REDACTED]"
+        ],
+        [
+          "Content-Type",
+          "application/json"
+        ],
+        [
+          "Accept",
+          "application/json"
+        ],
+        [
+          "Accept-Encoding",
+          "identity"
+        ],
+        [
+          "Content-Length",
+          "62"
+        ]
+      ],
+      "body": {
+        "input": "synthetic",
+        "stream": false,
+        "model": "kimi-for-coding"
+      },
+      "auth_matches_selected": true,
+      "device_matches_selected": true
+    },
+    {
+      "http_version": "HTTP/1.1",
+      "method": "POST",
+      "path": "/operator/kimi/v1/chat/completions",
+      "headers": [
+        [
+          "Host",
+          "127.0.0.1:<loopback-port>"
+        ],
+        [
+          "Authorization",
+          "[REDACTED]"
+        ],
+        [
+          "Content-Type",
+          "application/json"
+        ],
+        [
+          "Accept",
+          "application/json"
+        ],
+        [
+          "Accept-Encoding",
+          "identity"
+        ],
+        [
+          "Content-Length",
+          "78"
+        ]
+      ],
+      "body": {
+        "messages": [
+          {
+            "content": "synthetic",
+            "role": "user"
+          }
+        ],
+        "model": "kimi-for-coding"
+      },
+      "auth_matches_selected": true,
+      "device_matches_selected": true
+    },
+    {
+      "http_version": "HTTP/1.1",
+      "method": "POST",
+      "path": "/operator/kimi/v1/responses",
+      "headers": [
+        [
+          "Host",
+          "127.0.0.1:<loopback-port>"
+        ],
+        [
+          "Authorization",
+          "[REDACTED]"
+        ],
+        [
+          "Content-Type",
+          "application/json"
+        ],
+        [
+          "Accept",
+          "text/event-stream"
+        ],
+        [
+          "Accept-Encoding",
+          "identity"
+        ],
+        [
+          "Content-Length",
+          "61"
+        ]
+      ],
+      "body": {
+        "input": "synthetic",
+        "stream": true,
+        "model": "kimi-for-coding"
+      },
+      "auth_matches_selected": true,
+      "device_matches_selected": true
+    }
+  ],
+  "downstream": [
+    {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "content-length",
+          "163"
+        ],
+        [
+          "date",
+          "<date>"
+        ],
+        [
+          "connection",
+          "keep-alive"
+        ]
+      ],
+      "body": {
+        "id": "resp_synthetic",
+        "object": "response",
+        "output": [],
+        "status": "completed",
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 0,
+          "total_tokens": 3
+        },
+        "model": "kimi-k2.7-code"
+      }
+    },
+    {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "content-length",
+          "175"
+        ],
+        [
+          "date",
+          "<date>"
+        ],
+        [
+          "connection",
+          "keep-alive"
+        ]
+      ],
+      "body": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "synthetic",
+              "role": "assistant"
+            }
+          }
+        ],
+        "id": "chat_synthetic",
+        "object": "chat.completion",
+        "model": "kimi-k2.7-code"
+      }
+    },
+    {
+      "status": 200,
+      "headers": [
+        [
+          "transfer-encoding",
+          "chunked"
+        ],
+        [
+          "content-type",
+          "text/event-stream"
+        ]
+      ],
+      "body": [
+        {
+          "event": "response.created",
+          "data": {
+            "sequence_number": 0,
+            "type": "response.created",
+            "response": {
+              "id": "resp_synthetic",
+              "object": "response",
+              "output": [],
+              "status": "in_progress",
+              "model": "kimi-k2.7-code"
+            }
+          }
+        },
+        {
+          "event": "response.completed",
+          "data": {
+            "sequence_number": 1,
+            "type": "response.completed",
+            "response": {
+              "id": "resp_synthetic",
+              "object": "response",
+              "output": [],
+              "status": "completed",
+              "usage": {
+                "input_tokens": 3,
+                "output_tokens": 0,
+                "total_tokens": 3
+              },
+              "model": "kimi-k2.7-code"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

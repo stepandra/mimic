@@ -36,10 +36,30 @@ pub fn upstream_id(id: String) -> Option(String) {
   }
 }
 
-/// Narrow native HTTP surface: no cross-dialect, tool schema rewrite, images,
-/// WS, or Claude delegation is implied by the upstream registry metadata.
-/// Capabilities are model-level. The gateway and planner explicitly reject Chat
-/// streaming before I/O; only Responses has a native streaming implementation.
+/// Source-backed controls, not measured model availability. Reject unsupported
+/// levels instead of CPA's clamping, which would silently change client intent.
+pub fn thinking_levels(id: String) -> List(String) {
+  case id {
+    "kimi-k2" -> []
+    "kimi-k2-thinking" | "kimi-k2.5" | "kimi-k2.6" -> ["none", "low", "high"]
+    "kimi-k2.7-code" | "kimi-k2.7-code-highspeed" -> ["low", "high"]
+    "kimi-k2.8" | "kimi-k2.8-code" | "kimi-k3" | "kimi-k3-256k" -> [
+      "none",
+      "low",
+      "high",
+      "max",
+    ]
+    _ -> []
+  }
+}
+
+pub fn supports_images(id: String) -> Bool {
+  list.contains(reference_ids(), id)
+  && id != "kimi-k2"
+  && id != "kimi-k2-thinking"
+}
+
+/// Only native protocols are registered. No continuation, compact or audio.
 pub fn registration(id: String) -> Result(registry.Model, String) {
   case upstream_id(id) {
     None -> Error("Unknown Kimi model; explicit registration required")
@@ -49,9 +69,17 @@ pub fn registration(id: String) -> Result(registry.Model, String) {
           "kimi",
           id,
           ["api_key", "oauth"],
-          ["responses", "chat"],
-          ["responses", "chat/completions"],
-          [contracts.Buffer, contracts.Stream],
+          ["responses", "chat", "anthropic"],
+          ["responses", "chat/completions", "messages"],
+          case supports_images(id) {
+            True -> [
+              contracts.Buffer,
+              contracts.Stream,
+              contracts.Tools,
+              contracts.Images,
+            ]
+            False -> [contracts.Buffer, contracts.Stream, contracts.Tools]
+          },
         ),
       )
   }

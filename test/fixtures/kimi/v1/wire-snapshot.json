@@ -1,0 +1,133 @@
+{
+  "scope": "synthetic-kimi-loopback-http-1.1",
+  "mode": "api_key",
+  "domain": null,
+  "upstream": [
+    {
+      "http_version": "HTTP/1.1",
+      "method": "POST",
+      "path": "/operator/kimi/v1/responses",
+      "headers": [
+        ["Host", "127.0.0.1:<loopback-port>"],
+        ["Authorization", "[REDACTED]"],
+        ["Content-Type", "application/json"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "identity"],
+        ["Content-Length", "62"]
+      ],
+      "body": {"input": "synthetic", "stream": false, "model": "kimi-for-coding"},
+      "auth_matches_selected": true,
+      "device_matches_selected": true
+    },
+    {
+      "http_version": "HTTP/1.1",
+      "method": "POST",
+      "path": "/operator/kimi/v1/chat/completions",
+      "headers": [
+        ["Host", "127.0.0.1:<loopback-port>"],
+        ["Authorization", "[REDACTED]"],
+        ["Content-Type", "application/json"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "identity"],
+        ["Content-Length", "78"]
+      ],
+      "body": {"messages": [{"content": "synthetic", "role": "user"}], "model": "kimi-for-coding"},
+      "auth_matches_selected": true,
+      "device_matches_selected": true
+    },
+    {
+      "http_version": "HTTP/1.1",
+      "method": "POST",
+      "path": "/operator/kimi/v1/responses",
+      "headers": [
+        ["Host", "127.0.0.1:<loopback-port>"],
+        ["Authorization", "[REDACTED]"],
+        ["Content-Type", "application/json"],
+        ["Accept", "text/event-stream"],
+        ["Accept-Encoding", "identity"],
+        ["Content-Length", "61"]
+      ],
+      "body": {"input": "synthetic", "stream": true, "model": "kimi-for-coding"},
+      "auth_matches_selected": true,
+      "device_matches_selected": true
+    }
+  ],
+  "downstream": [
+    {
+      "status": 200,
+      "headers": [
+        ["content-type", "application/json"],
+        ["content-length", "180"],
+        ["date", "<date>"],
+        ["connection", "keep-alive"]
+      ],
+      "body": {
+        "id": "resp_synthetic",
+        "object": "response",
+        "model": "kimi-for-coding",
+        "status": "completed",
+        "output": [],
+        "usage": {"input_tokens": 3, "output_tokens": 0, "total_tokens": 3}
+      }
+    },
+    {
+      "status": 200,
+      "headers": [
+        ["content-type", "application/json"],
+        ["content-length", "191"],
+        ["date", "<date>"],
+        ["connection", "keep-alive"]
+      ],
+      "body": {
+        "id": "chat_synthetic",
+        "object": "chat.completion",
+        "model": "kimi-for-coding",
+        "choices": [
+          {
+            "index": 0,
+            "message": {"role": "assistant", "content": "synthetic"},
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "status": 200,
+      "headers": [
+        ["transfer-encoding", "chunked"],
+        ["content-type", "text/event-stream"]
+      ],
+      "body": [
+        {
+          "event": "response.created",
+          "data": {
+            "response": {
+              "id": "resp_synthetic",
+              "model": "kimi-for-coding",
+              "object": "response",
+              "output": [],
+              "status": "in_progress"
+            },
+            "sequence_number": 0,
+            "type": "response.created"
+          }
+        },
+        {
+          "event": "response.completed",
+          "data": {
+            "response": {
+              "id": "resp_synthetic",
+              "model": "kimi-for-coding",
+              "object": "response",
+              "output": [],
+              "status": "completed",
+              "usage": {"input_tokens": 3, "output_tokens": 0, "total_tokens": 3}
+            },
+            "sequence_number": 1,
+            "type": "response.completed"
+          }
+        }
+      ]
+    }
+  ]
+}

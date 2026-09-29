@@ -1,0 +1,7 @@
+{
+  "scope": "synthetic-kimi-loopback-http-1.1",
+  "snapshot": "wire-snapshot.json",
+  "sha256": "af43aaa92579e09d1a480a8b8ceb069e8c2042a3168d12184457b29453508381",
+  "modes": ["api_key", "oauth:kimi.com", "oauth:kimi.ai"],
+  "live_provider": false
+}
