@@ -249,9 +249,62 @@ pub fn verify(
 }
 
 fn valid_observations(text: String) -> Bool {
-  case json.parse(text, decode.dict(decode.string, decode.dynamic)) {
-    Ok(fields) -> dict.size(fields) > 0
+  // A callback summary with all checks set true is not transport evidence.
+  // This validates the existing v1 HTTP observation envelope; it is not
+  // cryptographic attestation of a trusted driver's process execution.
+  let response = {
+    use status <- decode.field("status", decode.int)
+    use headers <- decode.field(
+      "headers",
+      decode.list(decode.list(decode.string)),
+    )
+    use _body <- decode.field("body", decode.string)
+    decode.success(
+      status >= 100
+      && status <= 599
+      && list.all(headers, fn(pair) { list.length(pair) == 2 }),
+    )
+  }
+  let decoder = {
+    use response <- decode.field("response", response)
+    use upstream <- decode.field(
+      "upstream",
+      decode.list(decode.dict(decode.string, decode.dynamic)),
+    )
+    decode.success(
+      response
+      && list.all(upstream, fn(fields) {
+        observed_string(fields, "method")
+        && observed_string(fields, "path")
+        && observed_headers(fields)
+        && {
+          observed_string(fields, "body")
+          || observed_string(fields, "body_base64")
+        }
+      }),
+    )
+  }
+  case json.parse(text, decoder) {
+    Ok(valid) -> valid
     _ -> False
+  }
+}
+
+fn observed_string(fields, name) {
+  case dict.get(fields, name) {
+    Ok(value) -> decode.run(value, decode.string) |> result.is_ok
+    Error(_) -> False
+  }
+}
+
+fn observed_headers(fields) {
+  case dict.get(fields, "headers") {
+    Ok(value) ->
+      case decode.run(value, decode.list(decode.list(decode.string))) {
+        Ok(pairs) -> list.all(pairs, fn(pair) { list.length(pair) == 2 })
+        Error(_) -> False
+      }
+    Error(_) -> False
   }
 }
 

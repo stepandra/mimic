@@ -1,0 +1,56 @@
+{
+  "schema": "mimic.cpa-reference-handoff/v1",
+  "mimic_base": "3e00808ff0fefbb6728edb1769c17139ef0fd93a",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "archive_sha256": "56c970726edbd07591b77c1b6be18f733368f8a2f52a2f0931c928b30c13b540",
+  "executable_sha256": "28d3d0a5174d0bf2298d8da8a3963179456e4587bd83029a398a3ca61f23b94f",
+  "go_mod_sha256": "740845d5ae3b3275ad1a2104fcbf456b96e2eaa9b5f291efad80d87af3e1cb0d",
+  "go_sum_sha256": "1c3522513fb6c30407ce03057b48f43d5f75bbe90d4e3f667ae061eeb8100d83",
+  "go_executable_sha256": "3f947495f00cb7f8088a5cfd694da8dc43869b33f5e7377b048fb18922ffb7e0",
+  "toolchain": "go1.26.5 darwin/arm64",
+  "source_modified": false,
+  "synthetic": true,
+  "live_verified": "not_run",
+  "scope_id": "cpa-provider-parity-v2-devin",
+  "manifest_sha256": "3967cf7f03aff95d39f57d6b2590caecec5ba3f367bab11bde0f233121eb06d9",
+  "required_total": 37,
+  "release_passed": 0,
+  "current_blocker": "pinned_cpa_unconditionally_starts_antigravity_version_updater",
+  "artifacts": [
+    {
+      "kind": "final_hardened_fail_closed_release_report",
+      "path": "build/parity-results/mimic-parity-0E334D6B8A215A194662A59C/report.json",
+      "sha256": "105cc8eb9f011745690028b15b97ba7f20a358f49bff27db5a55570c86763ea8"
+    },
+    {
+      "kind": "initial_actual_cpa_run_report",
+      "path": "build/parity-results/mimic-parity-A421FE3CD2071B7FCAA2DE47/report.json",
+      "sha256": "fdc10529eaf278fea4da45da41455340ca9344e4d27ab43cb39d7c5c3bd77104"
+    },
+    {
+      "kind": "actual_cpa_messages_result",
+      "path": "build/parity-results/mimic-parity-B6E6DD33F642AC351575D276/cpa-exercise.result.json",
+      "sha256": "2071622f6aea935224fd44183df8aa80065c028948b3092c432c0e26ff37f8db"
+    },
+    {
+      "kind": "actual_cpa_chat_result",
+      "path": "build/parity-results/mimic-parity-D6F4F1BFC19957C73BE1D818/cpa-exercise.result.json",
+      "sha256": "390dbaf1da08d9c0a9e566a0a724c14c03ce1b6de0418083c7abe826e3f3bb08"
+    },
+    {
+      "kind": "subsequent_fail_closed_release_report",
+      "path": "build/parity-results/mimic-parity-5D43424643D978A022E00291/report.json",
+      "sha256": "182b929690ba57949e8dd4897197e3a38ec5195090b0e58703de95487fc8ef6c"
+    },
+    {
+      "kind": "actual_assembled_gateway_messages_result",
+      "path": "build/parity-results/mimic-parity-38476A74A90A166F4E9CF5D7/mimic-exercise.result.json",
+      "sha256": "1eb25e943566e3cc40a7f2f8d55ae88efc1256f5427ee7f146fc98b045b30428"
+    },
+    {
+      "kind": "actual_assembled_gateway_chat_result",
+      "path": "build/parity-results/mimic-parity-39A0F7008FE052D654FC5C87/mimic-exercise.result.json",
+      "sha256": "4d1c072ffb5a7b6571972f3ccd15a8bf96f1b79b2dc9c844d130f96b93cc823e"
+    }
+  ]
+}
