@@ -163,10 +163,10 @@ pub fn rejects_before_socket_test() {
   [
     c.Request(..request(), protocol: "responses"),
     c.Request(..request(), mode: c.Streaming),
-    c.Request(..request(), required: [c.Tools]),
+    c.Request(..request(), required: [c.Audio]),
     c.Request(
       ..request(),
-      body: "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"temperature\":0}",
+      body: "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"top_p\":0.5}",
     ),
   ]
   |> list.each(fn(req) { bridge.execute(owner, None, req) |> should.be_error })
