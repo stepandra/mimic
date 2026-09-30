@@ -451,11 +451,24 @@ fn route(
         |> list.filter(fn(account) { account.provider == "codex" })
         |> list.flat_map(fn(account) { account.models })
         |> list.unique
+      let state_dir = config.state_dir
+      // Retain only the private verification inputs, not the HTTP request or
+      // coalesced frame buffer. Every subsequent inference rechecks this key.
+      let authorized = case bearer(req) {
+        Ok(secret) -> fn() { keys.verify(state_dir, secret) == Ok(True) }
+        Error(_) -> fn() { False }
+      }
       websocket.upgrade_authenticated(
         req,
         services.engine,
         identity,
-        websocket.Settings(catalog, config.codex_user_agent, enabled, None),
+        websocket.Settings(
+          catalog,
+          config.codex_user_agent,
+          enabled,
+          None,
+          authorized,
+        ),
       )
     }
     Get, "/v1/models", None -> {

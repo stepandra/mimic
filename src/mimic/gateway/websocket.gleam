@@ -28,6 +28,8 @@ pub type Settings {
     user_agent: String,
     enabled_models: List(String),
     ca_file: Option(String),
+    // Server-owned current client authorization, never a client-supplied flag.
+    authorized: fn() -> Bool,
   )
 }
 
@@ -140,6 +142,7 @@ fn validate(
       req.method == http.Get
       && req.path == "/v1/responses"
       && tenant != ""
+      && settings.authorized()
       && settings.enabled_models != []
       && values(req, "origin") == []
       && values(req, "sec-websocket-extensions") == []
@@ -294,6 +297,10 @@ fn events(
 }
 
 fn create(state: State, text: String) -> Result(State, String) {
+  use _ <- result.try(case state.settings.authorized() {
+    True -> Ok(Nil)
+    False -> Error("WebSocket authorization unavailable")
+  })
   use document <- result.try(ir.parse(text))
   use model <- result.try(ir.string_field(document, "model"))
   use _ <- result.try(case list.contains(state.settings.enabled_models, model) {
@@ -328,7 +335,14 @@ fn create(state: State, text: String) -> Result(State, String) {
       )
       |> safe
   })
-  case runtime.session_send(upstream, request) {
+  // Opening a session may block on acquisition/refresh. Recheck after it
+  // returns as well, and close that handle if authorization was withdrawn.
+  let sent = case state.settings.authorized() {
+    True -> runtime.session_send(upstream, request)
+    False ->
+      Error(contracts.Failure(contracts.Cancelled, contracts.NotSent, None))
+  }
+  case sent {
     Error(_) -> {
       runtime.session_cancel(upstream)
       Error("WebSocket request failed")

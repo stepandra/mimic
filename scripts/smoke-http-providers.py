@@ -111,12 +111,14 @@ class Upstream(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def reply(self, status, content, media="application/json"):
+    def reply(self, status, content, media="application/json", retry_after=None):
         raw = content.encode()
         self.send_response(status)
         self.send_header("Content-Type", media)
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Connection", "close")
+        if retry_after is not None:
+            self.send_header("Retry-After", str(retry_after))
         self.end_headers()
         self.wfile.write(raw)
 
@@ -153,7 +155,9 @@ class Upstream(BaseHTTPRequestHandler):
                 "duplicate429": '{"error":"rate_limit_error","error":"ambiguous"}',
                 "duplicate": '{"access_token":"synthetic-a","access_token":"synthetic-b","expires_in":3600}',
             }[self.server.token_mode]
-            self.reply(status, payload)
+            # Restart persistence is tested *inside* an explicit deferral
+            # window, not by assuming two VM startups always fit the 5s fallback.
+            self.reply(status, payload, retry_after=300 if status == 429 else None)
             return
         self.server.requests.append((self.path, dict(self.headers), body))
         if self.server.status != 200:
@@ -499,10 +503,14 @@ def claude_checks(flow):
         upstream.token_mode = mode
         before_tokens = len(upstream.tokens)
         before_requests = len(upstream.requests)
+        began = time.monotonic()
         for _ in range(2):
             with flow.running():
                 assert call(flow.port, flow.payload)[0] == 503
-        assert len(upstream.tokens) == before_tokens + 1
+        elapsed = time.monotonic() - began
+        assert elapsed < 300, ("refresh restart fixture exceeded its window", mode, elapsed)
+        assert len(upstream.tokens) == before_tokens + 1, (
+            "unexpected refresh count", mode, len(upstream.tokens) - before_tokens, elapsed)
         assert len(upstream.requests) == before_requests
 
     # Admin replacement while rotation is in flight defeats stale refresh CAS.

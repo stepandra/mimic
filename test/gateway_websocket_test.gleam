@@ -18,6 +18,7 @@ import mimic/auth/runtime_store
 import mimic/auth/storage
 import mimic/fleet
 import mimic/gateway/websocket as gateway_ws
+import mimic/ingress/keys
 import mimic/protocol/responses/frames
 import mimic/providers/codex/adapter
 import mimic/providers/codex/models
@@ -126,6 +127,10 @@ fn mock_loop(peer: Peer, observed: process.Subject(String), mode: String) {
 
 fn app(upstreams: List(Mock), enabled: Bool) -> App {
   let assert Ok(store) = storage.new(directory())
+  keys.create(store.directory, "client-a", "synthetic-client-a")
+  |> should.be_ok
+  keys.create(store.directory, "client-b", "synthetic-client-b")
+  |> should.be_ok
   let accounts =
     list.index_map(upstreams, fn(mock, index) {
       let id = int.to_string(index)
@@ -175,15 +180,30 @@ fn app(upstreams: List(Mock), enabled: Bool) -> App {
         False -> []
       },
       None,
+      fn() { False },
     )
   let ready = process.new_subject()
   let assert Ok(server) =
     mist.new(fn(req) {
       case request.get_header(req, "authorization") {
         Ok("Bearer synthetic-client-a") ->
-          gateway_ws.upgrade_authenticated(req, engine, "tenant-a", settings)
+          gateway_ws.upgrade_authenticated(
+            req,
+            engine,
+            "tenant-a",
+            gateway_ws.Settings(..settings, authorized: fn() {
+              keys.verify(store.directory, "synthetic-client-a") == Ok(True)
+            }),
+          )
         Ok("Bearer synthetic-client-b") ->
-          gateway_ws.upgrade_authenticated(req, engine, "tenant-b", settings)
+          gateway_ws.upgrade_authenticated(
+            req,
+            engine,
+            "tenant-b",
+            gateway_ws.Settings(..settings, authorized: fn() {
+              keys.verify(store.directory, "synthetic-client-b") == Ok(True)
+            }),
+          )
         _ ->
           response.new(401) |> response.set_body(mist.Bytes(bytes_tree.new()))
       }
@@ -373,6 +393,45 @@ pub fn authentication_opt_in_origin_and_extensions_reject_before_upstream_test()
   process.receive(upstream.observed, 30) |> should.be_error
   runtime.active_leases(enabled.engine) |> should.equal(Ok(0))
   stop_app(enabled, [upstream])
+}
+
+pub fn revoked_key_cannot_send_again_on_existing_socket_test() {
+  let upstream = mock("complete")
+  let app = app([upstream], True)
+  let assert Ok(frame) =
+    frames.encode_text(frames.Client, create, Some(<<5, 6, 7, 8>>))
+  let #(_, peer) = connect_client(app, "synthetic-client-a", "", frame)
+  let peer = completed_turn(peer)
+  process.receive(upstream.observed, 1000) |> should.be_ok
+  process.receive(upstream.observed, 1000) |> should.be_ok
+  keys.revoke(app.store.directory, "client-a") |> should.be_ok
+  send_create(peer, create)
+  let assert Ok(#(peer, frames.Text(error))) = next(peer)
+  string.contains(error, "\"type\":\"error\"") |> should.be_true
+  string.contains(error, "synthetic-client-a") |> should.be_false
+  let assert Ok(#(_, frames.Close(Some(1011), _))) = next(peer)
+  close(peer.socket)
+  await_leases(app.engine, 0, 100)
+  process.receive(upstream.observed, 30) |> should.be_error
+  let #(_, other) = connect_client(app, "synthetic-client-b", "", frame)
+  let other = completed_turn(other)
+  close(other.socket)
+  await_leases(app.engine, 0, 100)
+  stop_app(app, [upstream])
+}
+
+pub fn revoked_after_upgrade_cannot_open_first_upstream_session_test() {
+  let upstream = mock("complete")
+  let app = app([upstream], True)
+  let #(_, peer) = connect_client(app, "synthetic-client-a", "", <<>>)
+  keys.revoke(app.store.directory, "client-a") |> should.be_ok
+  send_create(peer, create)
+  let assert Ok(#(peer, frames.Text(error))) = next(peer)
+  string.contains(error, "\"type\":\"error\"") |> should.be_true
+  close(peer.socket)
+  await_leases(app.engine, 0, 100)
+  process.receive(upstream.observed, 30) |> should.be_error
+  stop_app(app, [upstream])
 }
 
 pub fn failed_terminal_cannot_grant_a_previous_response_receipt_test() {

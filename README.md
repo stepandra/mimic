@@ -87,8 +87,11 @@ The [combined validation report](docs/INTEGRATION_VALIDATION.md) records the
 assembled CLI/shipment workflows and remaining conformance gaps. The newer
 [HTTP/WS validation report](docs/HTTP_PROVIDER_VALIDATION.md) records the
 Claude/Kimi integration and opt-in Codex WebSocket checks.
-The [merge-destination validation](docs/HTTP_WS_MERGE_VALIDATION.md) records
-the final combined gate run before publication.
+The [earlier merge-destination validation](docs/HTTP_WS_MERGE_VALIDATION.md)
+records that publication. The
+[nine-stream destination report](docs/NEXT_PARITY_MERGE_VALIDATION.md) records
+the latest **698-test Gleam / 92-test Python** gate, source/shipment workflows,
+failed-attempt history and remaining CPA/native/live gaps.
 
 ## Provider gateway
 
@@ -109,10 +112,14 @@ to use. Never put tokens in command arguments, checked-in configuration, logs
 or conformance reports.
 
 Native gateway modes include Claude Messages/SSE with API keys or configured
-OAuth, and Kimi text Responses JSON/SSE and buffered Chat with API keys or
-configured device OAuth. Codex WebSocket is an explicit opt-in:
+OAuth, native Kimi Chat/Responses JSON/SSE and buffered Messages with supported
+tools/thinking/images, and a separate buffered generic Kimi adapter.
+Codex WebSocket is an explicit opt-in:
 `codex_websocket` defaults to `false`. Only configured Codex models receive
-that capability; this does not enable WebSocket for every provider.
+that capability; this does not enable WebSocket for every provider. Bounded
+HTTP continuation is a separate opt-in, `codex_http_continuation`, also false
+by default. Its private in-memory receipts require an authenticated stable
+session hint and are invalidated by restart or credential replacement.
 See [the HTTP provider example](examples/providers-http.synthetic.json) and
 [the capability/configuration guide](docs/PROVIDER_INTEGRATION.md).
 

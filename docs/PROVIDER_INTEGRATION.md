@@ -43,11 +43,12 @@ an unimplemented provider look supported.
 
 | Provider | Configured auth | Exposed operations | Deliberately unavailable |
 |---|---|---|---|
-| Claude | `api_key`, `oauth` | Messages JSON/SSE, count_tokens, configured PKCE login and refresh | Model-specific CPA normalization/cloaking |
-| Codex | `oauth` | Responses buffered/SSE, compact; opt-in native WS with socket-scoped continuation | HTTP continuation, Responses-lite |
-| xAI | `api_key` | Native Responses buffered/SSE, compact | Gateway OAuth, tools, continuation, physical WS |
-| Devin | `session_token` | Experimental buffered one-shot Chat | Remote endpoints, Messages route, streaming, tools, broader conversation/media workflows |
-| Kimi | `api_key`, `oauth` | Native text-only Responses JSON/SSE, buffered Chat, configured device enrollment and refresh | Chat SSE, tools/media/thinking transformations, compact, Anthropic delegation, WS |
+| Claude | `api_key`, `oauth` | Messages JSON/SSE, count_tokens, configured PKCE login/refresh, bounded model policies | Full CPA client profile/cloaking and quota-scope fidelity |
+| Codex | `oauth` | Responses buffered/SSE, compact; independently opt-in HTTP and WS continuation | Native sparse Responses-lite and WS-lite fidelity |
+| xAI | `api_key` | Native Responses buffered/SSE, compact, supported function/namespace tools | Gateway OAuth, HTTP continuation, physical WS, full media/custom tools |
+| Devin | `session_token` | Experimental numeric-loopback buffered Chat; expanded native codec imported | Remote endpoints, Messages route, client streaming, gateway status/catalog/enrollment workflows |
+| Kimi | `api_key`, `oauth` | Native Responses JSON/SSE, Chat JSON/SSE, buffered Messages, supported tools/thinking/images, device enrollment/refresh | Messages SSE, compact, opaque continuation, WS, lossy CPA repairs and unsupported media |
+| Generic Kimi | `api_key` | Separate `openai-compatible-kimi` buffered Chat, supported text/images/tools without native transforms | OAuth, streaming, native Kimi policy and unsupported media |
 
 `GET /v1/models` lists configured, supported models rather than claiming a live
 provider catalog. Client authentication is checked before dispatch; revocation
@@ -85,6 +86,18 @@ and saves through the runtime store. It does not open a browser or maintain
 a second refresh manager. Private device identity also supplies native
 `X-Msh-Device-Id`. Unsupported request fields fail rather than being dropped.
 
+The separate generic identity uses `provider: "openai-compatible-kimi"` and
+an explicit model and API-prefix `base_path` (default `/v1`). It does not use
+native aliases, device metadata or thinking/temperature conversion. Semantic
+message and tool-result media are checked even when the caller's capability
+list is empty; unsupported nested audio/video/file blocks fail before I/O.
+
+Claude inference 429s are currently handled conservatively: the provider
+closes before the runtime can cool or rotate the credential pool, and the
+gateway returns sanitized 503. This also disables genuine quota failover until
+a bounded request-versus-account classifier is qualified. OAuth token-endpoint
+rate-limit deferral is separate and unchanged.
+
 Private credential files use 0600 and state directories use 0700. This is
 permission-protected storage, not encryption at rest. Source and shipment
 workflows are synthetic; no live login/provider compatibility is established.
@@ -98,6 +111,24 @@ extensions and subprotocol negotiation are rejected. The vendored pinned Mist
 parser rejects duplicate security singleton headers before normalization and
 requires HTTP/1.1 for upgrades; this also protects ordinary HTTP/1.x Authorization
 and Host boundaries. See `MIST_VENDOR.md` and `PROVIDER_WEBSOCKET.md`.
+
+The WS owner checks the current client key before each new inference and again
+after acquisition/refresh before send. Revocation therefore rejects the next
+request even on an already-open connection. This is not an atomic/proactive
+interruption guarantee for an already-admitted response.
+
+`codex_http_continuation` is a separate top-level boolean, **false by default**.
+With an explicit Codex catalog/account, it creates one private in-memory cache:
+32 entries, 8 MiB total serialized size, 2 MiB per entry, 15-minute TTL. It
+requires a stable `thread-id` or `x-client-request-id`; `thread-id` takes
+precedence when both are present, and both must be valid bounded values.
+The hint is scoped to the authenticated tenant and authoritative selected
+account/credential revision/model/origin, not trusted as an authorization token.
+Only validated completed responses followed by clean EOF publish receipts.
+Missing/expired/wrong-scope receipts fail without fallback or upstream I/O.
+Disabled, headerless and compact paths remain cache-free and reject a supplied
+`previous_response_id`. Restart and credential replacement invalidate receipts.
+There is no durable conversation-history store or public cache-clear API.
 
 ## Boundaries
 

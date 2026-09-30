@@ -129,6 +129,12 @@ pub fn prepare_at(
         ),
       ),
     )
+    use messages <- result.try(
+      ir.required(value, "messages")
+      |> result.try(ir.as_array)
+      |> result.replace_error(Nil),
+    )
+    use _ <- result.try(list.try_each(messages, validate_message_media))
     Ok(Capture(
       "mimic-kimi-compat",
       "generic-openai",
@@ -152,6 +158,63 @@ pub fn prepare_at(
   result.map_error(plan, fn(_) {
     contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
   })
+}
+
+/// Request.required is caller-supplied, not proof that the native body is
+/// within registered capabilities. Inspect protocol-owned content positions
+/// equally for user/system/assistant messages and role=tool results. Never
+/// descend into schema, function arguments, text strings or vendor extensions.
+fn validate_message_media(message: ir.Value) -> Result(Nil, Nil) {
+  use _ <- result.try(check(ir.field(message, "audio") == None))
+  case ir.field(message, "content") {
+    None | Some(ir.Null) | Some(ir.String(_)) -> Ok(Nil)
+    Some(ir.Array(parts)) -> list.try_each(parts, validate_content_part)
+    _ -> Error(Nil)
+  }
+}
+
+fn validate_content_part(part: ir.Value) -> Result(Nil, Nil) {
+  case ir.field(part, "type") {
+    Some(ir.String("text")) ->
+      ir.string_field(part, "text")
+      |> result.map(fn(_) { Nil })
+      |> result.replace_error(Nil)
+    Some(ir.String("image_url")) -> {
+      use image <- result.try(
+        ir.required(part, "image_url") |> result.replace_error(Nil),
+      )
+      use url <- result.try(
+        ir.string_field(image, "url") |> result.replace_error(Nil),
+      )
+      validate_image_url(url)
+    }
+    // Audio/video/file/unknown forms are unsupported, not opaque text.
+    _ -> Error(Nil)
+  }
+}
+
+fn validate_image_url(url: String) -> Result(Nil, Nil) {
+  use _ <- result.try(check(safe(url)))
+  case string.starts_with(url, "data:") {
+    True ->
+      check(
+        list.any(["png", "jpeg", "webp", "gif"], fn(kind) {
+          let prefix = "data:image/" <> kind <> ";base64,"
+          string.starts_with(url, prefix)
+          && string.length(url) > string.length(prefix)
+        }),
+      )
+    False -> {
+      use parsed <- result.try(uri.parse(url))
+      check(
+        parsed.scheme == Some("https")
+        && parsed.host != None
+        && parsed.host != Some("")
+        && parsed.userinfo == None
+        && parsed.fragment == None,
+      )
+    }
+  }
 }
 
 pub fn rejection(
