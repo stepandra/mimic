@@ -45,7 +45,7 @@ const orphan = "{\"type\":\"response.create\",\"model\":\"grok-4.7\",\"previous_
 
 const added = "{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"item_synthetic\",\"call_id\":\"call_synthetic\",\"name\":\"shell__run\",\"arguments\":\"\",\"status\":\"in_progress\"}}"
 
-const arguments_done = "{\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"item_id\":\"item_synthetic\",\"arguments\":\"{\\\"text\\\":\\\"shell__run\\\"}\"}"
+const arguments_done = "{\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"item_id\":\"item_synthetic\",\"call_id\":\"call_synthetic\",\"name\":\"shell__run\",\"arguments\":\"{\\\"text\\\":\\\"shell__run\\\"}\"}"
 
 const item_done = "{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"item_synthetic\",\"call_id\":\"call_synthetic\",\"name\":\"shell__run\",\"arguments\":\"{\\\"text\\\":\\\"shell__run\\\"}\",\"status\":\"completed\"}}"
 
@@ -89,8 +89,18 @@ pub fn peer(cert: Option(#(String, String)), mode: String) {
             case index == 0 && !malformed {
               True ->
                 list.each([added, arguments_done, item_done], fn(event) {
-                  let event = case mode == "identity" && event == item_done {
-                    True -> string.replace(event, "shell__run", "other__run")
+                  let event = case
+                    { mode == "identity" && event == item_done }
+                    || {
+                      mode == "argument_identity" && event == arguments_done
+                    }
+                  {
+                    True ->
+                      string.replace(
+                        event,
+                        "\"name\":\"shell__run\"",
+                        "\"name\":\"other__run\"",
+                      )
                     False -> event
                   }
                   let assert Ok(_) = mist.send_text_frame(connection, event)
@@ -200,6 +210,14 @@ fn until_terminal(adapter, handle, remaining) {
   let assert Ok(document) = ir.parse(message)
   case ir.string_field(document, "type"), remaining {
     Ok("response.completed"), _ -> #(message, handle)
+    Ok("response.function_call_arguments.done"), n if n > 0 -> {
+      ir.string_field(document, "name") |> should.equal(Ok("run"))
+      ir.string_field(document, "namespace") |> should.equal(Ok("shell"))
+      ir.string_field(document, "call_id") |> should.equal(Ok("call_synthetic"))
+      ir.string_field(document, "arguments")
+      |> should.equal(Ok("{\"text\":\"shell__run\"}"))
+      until_terminal(adapter, handle, n - 1)
+    }
     _, n if n > 0 -> until_terminal(adapter, handle, n - 1)
     _, _ -> panic as "synthetic xAI peer did not complete"
   }

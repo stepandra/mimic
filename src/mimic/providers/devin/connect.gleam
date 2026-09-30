@@ -1,6 +1,6 @@
 import gleam/bit_array
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import mimic/ir
@@ -12,11 +12,11 @@ pub type Frame {
 }
 
 pub opaque type Decoder {
-  Decoder(pending: BitArray, ended: Bool)
+  Decoder(pending: BitArray, ended: Bool, failed: Bool)
 }
 
 pub fn new() -> Decoder {
-  Decoder(<<>>, False)
+  Decoder(<<>>, False, False)
 }
 
 pub fn envelope(payload: BitArray) -> BitArray {
@@ -26,7 +26,7 @@ pub fn envelope(payload: BitArray) -> BitArray {
 /// A successful End is required; socket EOF alone never manufactures success.
 pub fn finish(decoder: Decoder) -> Result(Nil, String) {
   case decoder {
-    Decoder(<<>>, True) -> Ok(Nil)
+    Decoder(<<>>, True, False) -> Ok(Nil)
     _ -> Error("devin stream missing terminal frame or truncated")
   }
 }
@@ -35,37 +35,81 @@ pub fn feed(
   decoder: Decoder,
   bytes: BitArray,
 ) -> Result(#(Decoder, List(Frame)), String) {
-  case
-    bit_array.byte_size(bytes) + bit_array.byte_size(decoder.pending)
-    > 8_388_613
-  {
-    True -> Error("devin connect buffer limit")
-    False -> consume(<<decoder.pending:bits, bytes:bits>>, decoder.ended, [])
+  let #(next, frames, error) = feed_prefix(decoder, bytes)
+  case error {
+    None -> Ok(#(next, frames))
+    Some(error) -> Error(error)
   }
+}
+
+/// Emit the valid prefix even if a later frame in this chunk is invalid.
+/// A decoder returned with an error must not be fed again.
+pub fn feed_prefix(
+  decoder: Decoder,
+  bytes: BitArray,
+) -> #(Decoder, List(Frame), Option(String)) {
+  case decoder.failed {
+    True -> #(decoder, [], Some("devin connect decoder failed"))
+    False -> feed_bytes(decoder, bytes)
+  }
+}
+
+fn feed_bytes(
+  decoder: Decoder,
+  bytes: BitArray,
+) -> #(Decoder, List(Frame), Option(String)) {
+  // Each frame is bounded below before buffering an incomplete payload. A
+  // transport read can legitimately contain multiple complete bounded frames;
+  // rejecting the sum would make valid-prefix semantics depend on packet size.
+  consume(<<decoder.pending:bits, bytes:bits>>, decoder.ended, [])
 }
 
 fn consume(
   bytes: BitArray,
   ended: Bool,
   frames: List(Frame),
-) -> Result(#(Decoder, List(Frame)), String) {
+) -> #(Decoder, List(Frame), Option(String)) {
   case bytes, ended {
-    <<>>, _ -> Ok(#(Decoder(<<>>, ended), list.reverse(frames)))
-    _, True -> Error("devin data after terminal frame")
-    <<flag, _:bits>>, _ if flag != 0 && flag != 2 ->
-      Error("unsupported devin connect flag or compression")
-    <<_, size:32-big, _:bits>>, _ if size > 8_388_608 ->
-      Error("devin connect frame limit")
+    <<>>, _ -> #(Decoder(<<>>, ended, False), list.reverse(frames), None)
+    _, True -> {
+      // A terminal marker followed by bytes in this same feed was not a
+      // successful end. Retain preceding data, but do not emit End.
+      let frames = case frames {
+        [End, ..previous] -> previous
+        _ -> frames
+      }
+      #(
+        Decoder(<<>>, True, True),
+        list.reverse(frames),
+        Some("devin data after terminal frame"),
+      )
+    }
+    <<flag, _:bits>>, _ if flag != 0 && flag != 2 -> #(
+      Decoder(<<>>, False, True),
+      list.reverse(frames),
+      Some("unsupported devin connect flag or compression"),
+    )
+    <<_, size:32-big, _:bits>>, _ if size > 8_388_608 -> #(
+      Decoder(<<>>, False, True),
+      list.reverse(frames),
+      Some("devin connect frame limit"),
+    )
     <<flag, size:32-big, payload:bytes-size(size), rest:bits>>, _ -> {
       case flag {
         0 -> consume(rest, False, [Data(payload), ..frames])
         _ -> {
-          use _ <- result.try(trailer(payload))
-          consume(rest, True, [End, ..frames])
+          case trailer(payload) {
+            Ok(_) -> consume(rest, True, [End, ..frames])
+            Error(error) -> #(
+              Decoder(<<>>, False, True),
+              list.reverse(frames),
+              Some(error),
+            )
+          }
         }
       }
     }
-    _, _ -> Ok(#(Decoder(bytes, False), list.reverse(frames)))
+    _, _ -> #(Decoder(bytes, False, False), list.reverse(frames), None)
   }
 }
 

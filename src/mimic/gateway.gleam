@@ -7,7 +7,7 @@ import gleam/http/response.{type Response, Response}
 import gleam/io
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import mimic/auth
@@ -16,6 +16,7 @@ import mimic/auth/runtime_store
 import mimic/auth/storage
 import mimic/dialect/openai
 import mimic/dialect/responses
+import mimic/gateway/codex_http
 import mimic/gateway/config.{type Config}
 import mimic/gateway/enrollment
 import mimic/gateway/refresh
@@ -29,6 +30,7 @@ import mimic/providers/claude/adapter as claude_adapter
 import mimic/providers/claude/http as claude_http
 import mimic/providers/claude/json_guard as strict_json
 import mimic/providers/claude/login as claude_login
+import mimic/providers/claude/transport as claude_transport
 import mimic/providers/codex/adapter as codex
 import mimic/providers/codex/json_guard as request_json
 import mimic/providers/codex/models
@@ -46,14 +48,17 @@ import mimic/providers/registry
 import mimic/providers/runtime
 import mimic/providers/transport
 import mimic/providers/xai/adapter as xai
-import mimic/providers/xai/bridge as xai_bridge
 import mimic/providers/xai/endpoint as xai_endpoint
 import mimic/providers/xai/models as xai_models
 import mist
 import simplifile
 
 pub opaque type Server {
-  Server(port: Int, pid: process.Pid, engine: runtime.Runtime)
+  Server(port: Int, pid: process.Pid, services: Services)
+}
+
+type Services {
+  Services(engine: runtime.Runtime, continuation: Option(codex_http.State))
 }
 
 type Tick {
@@ -309,27 +314,39 @@ pub fn start(config: Config) -> Result(Server, String) {
   use engine <- result.try(
     runtime.start(store, registry, config.runtime_accounts(config)) |> sanitized,
   )
+  use continuation <- result.try(case config.codex_http_continuation {
+    False -> Ok(None)
+    True ->
+      case codex_http.start() {
+        Ok(cache) -> Ok(Some(cache))
+        Error(_) -> {
+          let _ = runtime.stop(engine)
+          Error("gateway continuation cache unavailable")
+        }
+      }
+  })
+  let services = Services(engine, continuation)
   let ready = process.new_subject()
   let listener =
-    mist.new(fn(req) { handle(req, config, engine) })
+    mist.new(fn(req) { handle(req, config, services) })
     |> mist.port(config.listen_port)
     |> mist.bind("127.0.0.1")
     |> mist.after_start(fn(port, _, _) { process.send(ready, port) })
   case mist.start(listener) {
     Error(_) -> {
-      let _ = runtime.stop(engine)
+      let _ = stop_services(services)
       Error("gateway listener failed")
     }
     Ok(server) ->
       case process.receive(ready, 5000) {
         Ok(actual) -> {
           process.unlink(server.pid)
-          Ok(Server(actual, server.pid, engine))
+          Ok(Server(actual, server.pid, services))
         }
         Error(_) -> {
           process.unlink(server.pid)
           process.send_exit(server.pid)
-          let _ = runtime.stop(engine)
+          let _ = stop_services(services)
           Error("gateway listener failed")
         }
       }
@@ -338,7 +355,19 @@ pub fn start(config: Config) -> Result(Server, String) {
 
 pub fn stop(server: Server) -> Result(Nil, String) {
   process.send_exit(server.pid)
-  runtime.stop(server.engine) |> sanitized
+  stop_services(server.services)
+}
+
+fn stop_services(services: Services) -> Result(Nil, String) {
+  // Run both cleanups even if one fails. The runtime closes outstanding
+  // upstream leases; cache shutdown prevents any later receipt publication.
+  let engine = runtime.stop(services.engine) |> sanitized
+  let cache = case services.continuation {
+    None -> Ok(Nil)
+    Some(state) -> codex_http.stop(state) |> sanitized
+  }
+  use _ <- result.try(engine)
+  cache
 }
 
 fn registrations(config: Config) -> Result(List(registry.Model), String) {
@@ -377,7 +406,12 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
         )
       }
       #("devin", _) -> list.first(devin.models()) |> sanitized
-      #("xai", model) -> xai_models.registration(model) |> sanitized
+      #("xai", model) ->
+        xai_models.registration_for(
+          model,
+          xai_endpoint.defaults(xai_endpoint.ApiKey),
+        )
+        |> sanitized
       #("kimi", model) -> kimi_models.registration(model) |> sanitized
       #("openai-compatible-kimi", model) ->
         kimi_compat.registration(model) |> sanitized
@@ -389,7 +423,7 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
 fn handle(
   req: Request(mist.Connection),
   config: Config,
-  engine: runtime.Runtime,
+  services: Services,
 ) -> Response(mist.ResponseData) {
   // Authorization is checked before model lookup, body parsing or any runtime
   // acquisition. The client never controls origin, account, or auth mode.
@@ -397,7 +431,7 @@ fn handle(
     Error(_) -> reject(401, "unauthorized")
     Ok(secret) ->
       case keys.verify(config.state_dir, secret) {
-        Ok(True) -> route(req, config, engine, verified_identity(secret))
+        Ok(True) -> route(req, config, services, verified_identity(secret))
         _ -> reject(401, "unauthorized")
       }
   }
@@ -406,7 +440,7 @@ fn handle(
 fn route(
   req: Request(mist.Connection),
   config: Config,
-  engine: runtime.Runtime,
+  services: Services,
   identity: String,
 ) -> Response(mist.ResponseData) {
   case req.method, req.path, req.query {
@@ -419,7 +453,7 @@ fn route(
         |> list.unique
       websocket.upgrade_authenticated(
         req,
-        engine,
+        services.engine,
         identity,
         websocket.Settings(catalog, config.codex_user_agent, enabled, None),
       )
@@ -447,14 +481,14 @@ fn route(
     }
     Post, "/v1/messages", None ->
       with_body(req, fn(body) {
-        dispatch(req, config, engine, identity, body, "messages", "messages")
+        dispatch(req, config, services, identity, body, "messages", "messages")
       })
     Post, "/v1/messages/count_tokens", None ->
       with_body(req, fn(body) {
         dispatch(
           req,
           config,
-          engine,
+          services,
           identity,
           body,
           "claude",
@@ -463,14 +497,22 @@ fn route(
       })
     Post, "/v1/responses", None ->
       with_body(req, fn(body) {
-        dispatch(req, config, engine, identity, body, "responses", "responses")
+        dispatch(
+          req,
+          config,
+          services,
+          identity,
+          body,
+          "responses",
+          "responses",
+        )
       })
     Post, "/v1/responses/compact", None ->
       with_body(req, fn(body) {
         dispatch(
           req,
           config,
-          engine,
+          services,
           identity,
           body,
           "responses",
@@ -482,7 +524,7 @@ fn route(
         dispatch(
           req,
           config,
-          engine,
+          services,
           identity,
           body,
           "chat",
@@ -517,12 +559,13 @@ fn with_body(
 fn dispatch(
   req: Request(mist.Connection),
   config: Config,
-  engine: runtime.Runtime,
+  services: Services,
   identity: String,
   body: String,
   provider: String,
   operation: String,
 ) -> Response(mist.ResponseData) {
+  let engine = services.engine
   case request_json.parse(body) {
     Error(_) -> reject(400, "invalid JSON")
     Ok(value) ->
@@ -595,7 +638,7 @@ fn dispatch(
                 | "claude", "messages/count_tokens", False
                 -> serve_claude(req, engine, request, stream)
                 "codex", "responses", _ | "codex", "responses/compact", False ->
-                  serve_codex(req, config, engine, identity, request, stream)
+                  serve_codex(req, config, services, identity, request, stream)
                 "xai", "responses", _ | "xai", "responses/compact", False ->
                   serve_xai(req, engine, request, stream)
                 "kimi", "responses", _
@@ -623,8 +666,7 @@ fn serve_claude(
   req: contracts.Request,
   streaming: Bool,
 ) -> Response(mist.ResponseData) {
-  let adapter =
-    transport.http(claude_adapter.prepare, claude_adapter.rejection, None)
+  let adapter = claude_transport.http(claude_adapter.prepare, None)
   case runtime.open(engine, adapter, req) {
     Error(_) -> reject(503, "provider unavailable")
     Ok(opened) ->
@@ -698,6 +740,52 @@ fn stream_claude(
 }
 
 fn serve_codex(
+  incoming: Request(mist.Connection),
+  config: Config,
+  services: Services,
+  identity: String,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
+  // Reject an unavailable continuation before runtime acquisition can refresh
+  // credentials or contact an upstream. Headerless and compact stay stateless.
+  let hint = case services.continuation, request.operation {
+    Some(_), "responses" -> codex_session_hint(incoming)
+    _, _ -> Ok(None)
+  }
+  case request_json.parse(request.body), hint {
+    Ok(body), Ok(hint) ->
+      case services.continuation, hint, request.operation {
+        Some(state), Some(session), "responses" -> {
+          let assert Some(catalog) = config.codex_catalog
+          codex_http.serve(
+            incoming,
+            services.engine,
+            state,
+            codex.Config(identity, config.codex_user_agent, True, catalog, None),
+            contracts.Request(..request, session: identity <> ":" <> session),
+            streaming,
+          )
+        }
+        _, _, _ ->
+          case ir.field(body, "previous_response_id") {
+            Some(_) -> reject(409, "HTTP continuation unavailable")
+            None ->
+              serve_codex_stateless(
+                incoming,
+                config,
+                services.engine,
+                identity,
+                request,
+                streaming,
+              )
+          }
+      }
+    _, _ -> reject(400, "invalid Codex request or session hint")
+  }
+}
+
+fn serve_codex_stateless(
   req: Request(mist.Connection),
   config: Config,
   engine: runtime.Runtime,
@@ -795,29 +883,35 @@ fn serve_xai(
 ) -> Response(mist.ResponseData) {
   // Both origin and credential belong to the runtime-selected account.
   // Capturing the first configured origin here breaks multi-account fallback.
+  let native =
+    xai.selected_http(xai_endpoint.defaults(xai_endpoint.ApiKey), None)
   let adapter =
-    transport.http(
-      fn(context, request) {
-        let policy = case string.starts_with(context.origin, "http://") {
-          True -> xai_endpoint.LocalMock
-          False -> xai_endpoint.VerifiedTls
-        }
-        let settings =
-          xai_endpoint.Config(
-            xai_endpoint.ApiKey,
-            True,
-            False,
-            Some(context.origin <> "/v1"),
-            Some(context.origin <> "/v1"),
-            None,
-            policy,
-          )
-        xai_bridge.prepare(settings, context, request)
-      },
-      xai_bridge.rejection,
-      None,
-    )
+    contracts.Adapter(..native, open: fn(context: contracts.Context, request) {
+      let policy = case string.starts_with(context.origin, "http://") {
+        True -> xai_endpoint.LocalMock
+        False -> xai_endpoint.VerifiedTls
+      }
+      let settings =
+        xai_endpoint.Config(
+          xai_endpoint.ApiKey,
+          True,
+          False,
+          Some(context.origin <> "/v1"),
+          Some(context.origin <> "/v1"),
+          None,
+          policy,
+        )
+      // Keep restoration refs on the selected native handle. The legacy raw
+      // Capture hook cannot safely restore namespaced/colliding tool names.
+      xai.selected_http(settings, None).open(context, request)
+    })
   case runtime.open(engine, adapter, request) {
+    Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, _))
+    | Error(contracts.Failure(
+        contracts.InvalidConfiguration,
+        contracts.NotSent,
+        _,
+      )) -> reject(422, "unsupported xAI request")
     Error(_) -> reject(503, "provider unavailable")
     Ok(opened) ->
       case streaming {
@@ -1158,6 +1252,45 @@ fn request_session(req: Request(mist.Connection)) -> String {
         False -> fresh_id()
       }
     _ -> fresh_id()
+  }
+}
+
+fn codex_session_hint(
+  req: Request(mist.Connection),
+) -> Result(Option(String), Nil) {
+  use thread <- result.try(checked_session_header(req, "thread-id"))
+  use request_id <- result.try(checked_session_header(
+    req,
+    "x-client-request-id",
+  ))
+  // A thread identity wins over a per-request tracing identity when both are
+  // supplied. Neither is authority without the authenticated tenant and the
+  // provider's current account/revision/model/origin scope.
+  case thread {
+    Some(_) -> Ok(thread)
+    None -> Ok(request_id)
+  }
+}
+
+fn checked_session_header(
+  req: Request(mist.Connection),
+  name: String,
+) -> Result(Option(String), Nil) {
+  case list.filter(req.headers, fn(h) { string.lowercase(h.0) == name }) {
+    [] -> Ok(None)
+    [#(_, value)] ->
+      case
+        value != ""
+        && string.byte_size(value) <= 128
+        && string.trim(value) == value
+        && !string.contains(value, "\r")
+        && !string.contains(value, "\n")
+        && !string.contains(value, "\u{0000}")
+      {
+        True -> Ok(Some(value))
+        False -> Error(Nil)
+      }
+    _ -> Error(Nil)
   }
 }
 

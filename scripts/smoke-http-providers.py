@@ -26,7 +26,9 @@ BASE = runpy.run_path(str(ROOT / "scripts/smoke-gateway.py"))
 CLIENT = BASE["CLIENT_KEY"]
 SECRETS = [CLIENT, "synthetic-old-access", "synthetic-old-refresh",
            "synthetic-new-access", "synthetic-new-refresh", "synthetic-admin-access",
-           "synthetic-kimi-key", "synthetic-generic-kimi-key", "synthetic-device-code"]
+           "synthetic-kimi-key", "synthetic-generic-kimi-key", "synthetic-xai-key",
+           "synthetic-device-code", "synthetic-backup-access",
+           "synthetic-private-rejection"]
 MODEL = "synthetic-claude"
 START = 'event: message_start\ndata: {"type":"message_start","message":{"id":"synthetic","usage":{"input_tokens":3}}}\n\n'
 DELTA = 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好🌍"}}\n\n'
@@ -80,6 +82,29 @@ def kimi_sse(terminal=True):
                    for name, value in frames)
 
 
+def xai_sse(number, name, terminal=True):
+    """Synthetic native tool lifecycle; names come from the observed request."""
+    response = {"object": "response", "id": f"resp_xai_{number}",
+                "status": "in_progress", "output": []}
+    events = [{"type": "response.created", "response": dict(response)}]
+    if terminal:
+        arguments = '{"literal":"clientfn_web_search","text":"你好🌍"}'
+        item = {"type": "function_call", "id": f"item_xai_{number}",
+                "call_id": f"call_xai_{number}", "name": name,
+                "arguments": arguments, "status": "completed"}
+        events.extend([
+            {"type": "response.output_item.added", "output_index": 0, "item": item},
+            {"type": "response.function_call_arguments.done", "output_index": 0,
+             "item_id": item["id"], "arguments": arguments},
+            {"type": "response.output_item.done", "output_index": 0, "item": item},
+            {"type": "response.completed", "response": dict(
+                response, status="completed", output=[item],
+                usage={"input_tokens": 3, "output_tokens": 2, "total_tokens": 5})},
+        ])
+    return "".join("event: " + event["type"] + "\ndata: "
+                   + json.dumps(event, ensure_ascii=False) + "\n\n" for event in events)
+
+
 class Upstream(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -113,7 +138,10 @@ class Upstream(BaseHTTPRequestHandler):
             self.server.tokens.append(body)
             self.server.token_headers.append(dict(self.headers))
             self.server.token_entered.set()
-            self.server.token_release.wait(10)
+            if not self.server.token_release.wait(30):
+                self.server.token_gate_timeout = True
+                self.reply(503, '{"error":"synthetic_gate_timeout"}')
+                return
             if self.server.token_mode == "disconnect":
                 self.connection.shutdown(socket.SHUT_RDWR)
                 self.connection.close()
@@ -129,7 +157,39 @@ class Upstream(BaseHTTPRequestHandler):
             return
         self.server.requests.append((self.path, dict(self.headers), body))
         if self.server.status != 200:
-            self.reply(self.server.status, '{"error":{"type":"synthetic_rejection"}}')
+            self.reply(self.server.status, getattr(
+                self.server, "rejection_body",
+                '{"error":{"type":"synthetic_rejection"}}'))
+            return
+        if self.path == "/v1/responses":
+            number = len(self.server.requests)
+            name = body["tools"][0]["name"]
+            payload = xai_sse(number, name, self.server.stream_mode == "good")
+            if self.server.stream_mode == "malformed":
+                payload += "event: response.completed\ndata: {broken}\n\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            try:
+                for byte in payload.encode():
+                    self.wfile.write(b"1\r\n" + bytes([byte]) + b"\r\n")
+                self.wfile.flush()
+                if self.server.stream_mode == "cancel":
+                    for _ in range(1000):
+                        frame = ("event: response.in_progress\ndata: " + json.dumps({
+                            "type": "response.in_progress",
+                            "response": {"object": "response", "id": f"resp_xai_{number}",
+                                         "status": "in_progress", "output": []},
+                        }) + "\n\n").encode()
+                        self.wfile.write(f"{len(frame):x}\r\n".encode() + frame + b"\r\n")
+                        self.wfile.flush()
+                        time.sleep(0.01)
+                    raise AssertionError("xAI upstream not cancelled")
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                self.server.cancel_seen.set()
             return
         if self.path == "/operator/generic/v1/chat/completions":
             self.reply(200, json.dumps({
@@ -313,6 +373,7 @@ class Workflow:
         self.upstream.cancel_seen = threading.Event()
         self.upstream.token_entered = threading.Event()
         self.upstream.token_release = threading.Event()
+        self.upstream.token_gate_timeout = False
         self.upstream.token_release.set()
         self.worker = threading.Thread(target=self.upstream.serve_forever, daemon=True)
         self.worker.start()
@@ -473,6 +534,55 @@ def claude_checks(flow):
         flow.cli("key", "revoke", str(flow.config), "client")
         assert call(flow.port, flow.payload)[0] == 401
         assert len(upstream.requests) == before
+
+
+def claude_429_checks(flow, mode):
+    """Two usable accounts: every Claude route must bypass cooldown/replay on 429."""
+    settings = json.loads(flow.config.read_text())
+    selected = dict(settings["accounts"][1], auth_mode=mode)
+    if mode == "api_key":
+        selected.pop("oauth")
+    settings["accounts"] = [selected, dict(selected, id="zz-backup")]
+    flow.config.write_text(json.dumps(settings))
+    for account, access in [
+        ("selected", "synthetic-old-access"),
+        ("zz-backup", "synthetic-backup-access"),
+    ]:
+        grant = ({"api_key": access} if mode == "api_key"
+                 else flow.grant(expired=False, access=access))
+        path = private(flow.directory / f"{account}-grant", json.dumps(grant))
+        flow.cli("credential", "import", str(flow.config), account, path)
+    upstream = flow.upstream
+    upstream.rejection_body = json.dumps({"error": {
+        "type": "rate_limit_error",
+        "message": "insufficient credits for fast mode: synthetic-private-rejection",
+    }})
+
+    def assert_selected():
+        headers = {name.lower(): value for name, value in upstream.requests[-1][1].items()}
+        assert (headers.get("x-api-key") == "synthetic-old-access" if mode == "api_key"
+                else headers.get("authorization") == "Bearer synthetic-old-access")
+
+    with flow.running():
+        for streaming, route in [
+            (False, "/v1/messages"), (True, "/v1/messages"),
+            (False, "/v1/messages/count_tokens"),
+        ]:
+            payload = dict(flow.payload, stream=streaming)
+            upstream.status = 429
+            before = len(upstream.requests)
+            assert call(flow.port, payload, route)[0] == 503
+            assert len(upstream.requests) == before + 1, "429 was replayed"
+            assert_selected()
+            upstream.status = 200
+            # No re-import/reset between rejection and the next ordinary request.
+            assert call(flow.port, payload, route)[0] == 200
+            assert len(upstream.requests) == before + 2
+            assert_selected()
+    with flow.running():
+        assert call(flow.port, dict(flow.payload, stream=False))[0] == 200
+        assert_selected()
+    assert not upstream.tokens, "non-expired rejection must not refresh credentials"
 
 
 def login_checks(flow):
@@ -730,9 +840,9 @@ def generic_kimi_checks(flow):
         flow.cli("credential", "import", str(flow.config), account, path)
     payload = {
         "model": model, "messages": [{"role": "user", "content": "synthetic"}],
-        "temperature": 0.2, "vendor": {"model": "user-owned-value"},
+        "temperature": 0.2, "vendor": {"model": "user-owned-value", "audio": "opaque user data"},
         "tools": [{"type": "function", "function": {"name": "lookup",
-                  "parameters": {"type": "object", "properties": {}}}}],
+                  "parameters": {"type": "object", "properties": {"audio": {"type": "string"}}}}}],
     }
     for accounts in ([native, absent, generic], [absent, generic, native]):
         settings["accounts"] = accounts
@@ -750,6 +860,12 @@ def generic_kimi_checks(flow):
             assert headers["Authorization"] == "Bearer synthetic-generic-kimi-key"
             assert headers["Host"] == flow.origin.removeprefix("http://")
             assert "X-Msh-Device-Id" not in headers and CLIENT not in str(headers)
+            image = dict(payload, messages=[{"role": "user", "content": [
+                {"type": "text", "text": "synthetic image"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,aQ=="}},
+            ]}])
+            assert call(flow.port, image, "/v1/chat/completions")[0] == 200
+            assert flow.upstream.requests[-1][2] == image
             native_body = {"model": KIMI_MODEL, "messages": payload["messages"]}
             status, raw, _ = call(flow.port, native_body, "/v1/chat/completions")
             assert status == 200 and json.loads(raw)["model"] == KIMI_MODEL
@@ -758,6 +874,15 @@ def generic_kimi_checks(flow):
             for route, rejected in [
                 ("/v1/chat/completions", dict(payload, stream=True)),
                 ("/v1/chat/completions", dict(payload, previous_response_id="unscoped")),
+                ("/v1/chat/completions", dict(payload, messages=[{
+                    "role": "user", "content": [{"type": "input_audio",
+                        "input_audio": {"data": "AA==", "format": "wav"}}]}])),
+                ("/v1/chat/completions", dict(payload, messages=[{
+                    "role": "user", "content": [{"type": "video_url",
+                        "video_url": {"url": "https://invalid.example/video"}}]}])),
+                ("/v1/chat/completions", dict(payload, messages=[{
+                    "role": "user", "content": [{"type": "file",
+                        "file": {"file_id": "synthetic-unsupported"}}]}])),
                 ("/v1/responses", {"model": model, "input": "synthetic"}),
                 ("/v1/messages", dict(payload, max_tokens=16)),
             ]:
@@ -770,6 +895,91 @@ def generic_kimi_checks(flow):
                               cwd=flow.cwd, capture_output=True, timeout=60)
     assert rejected.returncode != 0
     assert not any(secret.encode() in rejected.stdout + rejected.stderr for secret in SECRETS)
+
+
+def xai_checks(flow):
+    """Root API-key/tool handling only; OAuth and WS need separate route gates."""
+    settings = json.loads(flow.config.read_text())
+    selected = {"provider": "xai", "auth_mode": "api_key", "id": "selected",
+                "origin": flow.origin, "models": ["grok-4.7"]}
+    settings["accounts"] = [dict(selected, id="absent", origin="http://127.0.0.1:1"),
+                            selected]
+    flow.config.write_text(json.dumps(settings))
+    key_path = private(flow.directory / "xai-key", json.dumps({"api_key": "synthetic-xai-key"}))
+    flow.cli("credential", "import", str(flow.config), "selected", key_path)
+    payload = {
+        "model": "grok-4.7", "input": "synthetic", "stream": False,
+        "tools": [{"type": "function", "name": "web_search",
+                   "description": "literal web_search", "parameters": {"type": "object"}}],
+        "tool_choice": {"type": "function", "name": "web_search"},
+    }
+    for _ in range(2):
+        with flow.running():
+            before = len(flow.upstream.requests)
+            ambiguous_http_denied(flow.port, payload, "/v1/responses")
+            assert call(flow.port, payload, "/v1/responses", key="wrong")[0] == 401
+            assert len(flow.upstream.requests) == before
+            status, raw, _ = call(flow.port, payload, "/v1/responses")
+            assert status == 200
+            completed = json.loads(raw)
+            item = completed["output"][0]
+            assert item["name"] == "web_search"
+            assert json.loads(item["arguments"]) == {
+                "literal": "clientfn_web_search", "text": "你好🌍",
+            }
+            assert completed["usage"]["total_tokens"] == 5
+            _, headers, planned = flow.upstream.requests[-1]
+            assert headers["Authorization"] == "Bearer synthetic-xai-key"
+            assert headers["Host"] == flow.origin.removeprefix("http://")
+            assert planned["tools"][0]["name"] == "clientfn_web_search"
+            assert planned["tools"][0]["description"] == "literal web_search"
+            assert planned["tool_choice"]["name"] == "clientfn_web_search"
+            assert planned["stream"] is True
+            history = [item, {"type": "function_call_output", "call_id": item["call_id"],
+                              "output": "synthetic tool result"}]
+            assert call(flow.port, dict(payload, input=history), "/v1/responses")[0] == 200
+            streaming = dict(payload, stream=True)
+            status, raw, incomplete = call(flow.port, streaming, "/v1/responses")
+            assert status == 200 and not incomplete
+            frames = [json.loads(line[6:]) for line in raw.splitlines() if line.startswith("data: ")]
+            assert frames[-1]["type"] == "response.completed"
+            assert frames[-1]["response"]["output"][0]["name"] == "web_search"
+            before = len(flow.upstream.requests)
+            for rejected in (
+                dict(payload, previous_response_id=completed["id"]),
+                dict(payload, tools=[{"type": "custom", "name": "unsupported"}]),
+                dict(payload, input=[{"type": "input_image", "image_url": "https://invalid.example/a.png"}]),
+            ):
+                assert call(flow.port, rejected, "/v1/responses")[0] == 422
+                assert len(flow.upstream.requests) == before
+            for mode in ("malformed", "disconnect"):
+                flow.upstream.stream_mode = mode
+                status, raw, incomplete = call(flow.port, streaming, "/v1/responses",
+                                               allow_incomplete=True)
+                assert status == 200 and incomplete and "event: response.created" in raw
+                assert "event: response.completed" not in raw
+            flow.upstream.stream_mode = "good"
+    with flow.running():
+        flow.upstream.stream_mode = "cancel"
+        flow.upstream.cancel_seen.clear()
+        connection = http.client.HTTPConnection("127.0.0.1", flow.port, timeout=10)
+        connection.request("POST", "/v1/responses", json.dumps(dict(payload, stream=True)), {
+            "Authorization": f"Bearer {CLIENT}", "Content-Type": "application/json",
+        })
+        response = connection.getresponse()
+        assert response.read(16).startswith(b"event: response.")
+        response.close()
+        connection.close()
+        assert flow.upstream.cancel_seen.wait(5)
+        flow.upstream.stream_mode = "good"
+        flow.upstream.status = 429
+        before = len(flow.upstream.requests)
+        assert call(flow.port, payload, "/v1/responses")[0] == 503
+        assert len(flow.upstream.requests) == before + 1
+        flow.cli("key", "revoke", str(flow.config), "client")
+        before = len(flow.upstream.requests)
+        assert call(flow.port, payload, "/v1/responses")[0] == 401
+        assert len(flow.upstream.requests) == before
 
 
 def main():
@@ -788,6 +998,15 @@ def main():
             login_checks(flow)
         finally:
             flow.close()
+    for mode in ("api_key", "oauth"):
+        with tempfile.TemporaryDirectory(prefix="claude-quota-", dir=ROOT / "build/integration") as temp:
+            directory = Path(temp)
+            directory.chmod(0o700)
+            flow = Workflow(directory, command, args.shipment)
+            try:
+                claude_429_checks(flow, mode)
+            finally:
+                flow.close()
     for mode, domain in (("api_key", "kimi.com"), ("oauth", "kimi.com"), ("oauth", "kimi.ai")):
         with tempfile.TemporaryDirectory(prefix="kimi-http-", dir=ROOT / "build/integration") as temp:
             directory = Path(temp)
@@ -805,13 +1024,23 @@ def main():
             generic_kimi_checks(flow)
         finally:
             flow.close()
+    with tempfile.TemporaryDirectory(prefix="xai-http-", dir=ROOT / "build/integration") as temp:
+        directory = Path(temp)
+        directory.chmod(0o700)
+        flow = Workflow(directory, command, args.shipment)
+        try:
+            xai_checks(flow)
+        finally:
+            flow.close()
     print(json.dumps({
         "scope": "assembled_http_provider_cli", "synthetic": True,
         "claude_oauth_sse": True, "refresh_singleflight_restart_cas": True,
         "claude_configured_pkce_login": True,
+        "claude_429_all_routes_no_pool_penalty_or_replay": True,
         "kimi_native_chat_responses_sse_device_refresh_restart": True,
         "kimi_chat_tools_history_model_restore_and_messages": True,
         "kimi_native_generic_registry_and_credential_isolation": True,
+        "xai_api_key_tools_history_sse_restart": True,
         "byte_boundaries_prefix_cancel": True, "live_provider": False,
         "shipment": bool(args.shipment),
     }))

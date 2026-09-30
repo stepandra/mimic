@@ -6,10 +6,12 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gleam/uri
+import mimic/auth/crypto
 import mimic/egress
 import mimic/ir
 import mimic/providers/codex/errors
 import mimic/providers/codex/json_guard
+import mimic/providers/codex/lite
 import mimic/providers/codex/models
 import mimic/providers/codex/oauth
 import mimic/providers/codex/request as codex_request
@@ -36,8 +38,23 @@ pub fn http(
   config: Config,
   ca_file: Option(String),
 ) -> contracts.Adapter(egress.Stream) {
+  http_planned(config, ca_file, fn(_, _) { Nil })
+}
+
+/// Gateway hook: retain plans privately per attempt, then select ONLY the plan
+/// whose account equals runtime.Response.account. Never log this callback data.
+pub fn http_planned(
+  config: Config,
+  ca_file: Option(String),
+  remember: fn(String, codex_request.Prepared) -> Nil,
+) -> contracts.Adapter(egress.Stream) {
   transport.http(
-    fn(context, request) { prepare(config, context, request) },
+    fn(context, request) {
+      use prepared <- result.try(prepare_native(config, context, request))
+      use capture <- result.try(capture(context, request, prepared))
+      remember(context.account, prepared)
+      Ok(capture)
+    },
     rejection,
     ca_file,
   )
@@ -67,6 +84,8 @@ pub fn prepare_native(
       && req.auth_mode == "oauth"
       && req.protocol == "responses"
       && !list.contains(req.required, contracts.WebSocket)
+      && context.origin != ""
+      && context.session_key != ""
     {
       True -> Ok(Nil)
       False -> Error(unsupported())
@@ -74,6 +93,7 @@ pub fn prepare_native(
   )
   use operation <- result.try(case req.operation, req.mode {
     "responses", _ -> Ok(routes.Responses)
+    "responses/lite", _ -> Ok(routes.Lite)
     "responses/compact", contracts.Buffered -> Ok(routes.Compact)
     _, _ -> Error(unsupported())
   })
@@ -93,12 +113,15 @@ pub fn prepare_native(
     models.lookup(config.catalog, req.model)
     |> result.map_error(fn(_) { unsupported() }),
   )
-  use _ <- result.try(case model.responses_lite {
-    True -> Error(unsupported())
-    False -> Ok(Nil)
-  })
   use body <- result.try(
-    ir.parse(req.body) |> result.map_error(fn(_) { unsupported() }),
+    json_guard.parse(req.body) |> result.map_error(fn(_) { unsupported() }),
+  )
+  use marked_lite <- result.try(
+    lite.enabled(body) |> result.map_error(fn(_) { unsupported() }),
+  )
+  use _ <- result.try(
+    lite.validate_modalities(body, model.input_modalities)
+    |> result.map_error(fn(_) { unsupported() }),
   )
   use _ <- result.try(case ir.field(body, "previous_response_id") {
     None | Some(ir.Null) -> Ok(Nil)
@@ -114,7 +137,18 @@ pub fn prepare_native(
       context.account,
       account,
       req.model,
-      context.session_key,
+      // HTTP origin/mode remain separate from native WS identity. Authoritative
+      // credential Revision is enforced by codex/http's shared-cache scope.
+      crypto.pkce_challenge(
+        "mimic:codex:http:v1:"
+        <> ir.stringify(
+          ir.Array([
+            ir.String(context.origin),
+            ir.String(context.session_key),
+            ir.Boolean(marked_lite || operation == routes.Lite),
+          ]),
+        ),
+      ),
     )
   codex_request.prepare(
     body,
@@ -177,25 +211,26 @@ pub fn capture(
 /// coordinator MUST use the common codec to assemble the client JSON result.
 /// /responses/compact returns JSON, never regular Responses streaming.
 pub fn registration(model: models.Model) -> Result(registry.Model, String) {
-  case model.responses_lite {
-    True -> Error("Responses-lite is not supported by the Codex HTTP adapter")
-    False ->
-      Ok(
-        registry.Model(
-          "codex",
-          model.slug,
-          ["oauth"],
-          ["responses"],
-          ["responses", "responses/compact"],
-          [
-            contracts.Buffer,
-            contracts.Stream,
-            contracts.Tools,
-            contracts.Continuation,
-          ],
-        ),
-      )
+  let images = case list.contains(model.input_modalities, "image") {
+    True -> [contracts.Images]
+    False -> []
   }
+  Ok(
+    registry.Model(
+      "codex",
+      model.slug,
+      ["oauth"],
+      ["responses"],
+      ["responses", "responses/compact", "responses/lite"],
+      [
+        contracts.Buffer,
+        contracts.Stream,
+        contracts.Tools,
+        contracts.Continuation,
+        ..images
+      ],
+    ),
+  )
 }
 
 pub fn material(tokens: oauth.Tokens) -> contracts.OAuthData {

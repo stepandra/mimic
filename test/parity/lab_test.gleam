@@ -21,7 +21,7 @@ fn evidence() {
     "synthetic-test-revision",
     "exercise",
     "passed",
-    "{\"status\":200,\"headers\":[[\"X-Test\",\"a\"],[\"X-Test\",\"b\"]]}",
+    "{\"response\":{\"status\":200,\"headers\":[[\"X-Test\",\"a\"],[\"X-Test\",\"b\"]],\"body\":\"synthetic\"},\"upstream\":[]}",
     [
       #("assembled_ingress", True),
       ..list.map(fixture.checks, fn(name) { #(name, True) })
@@ -184,4 +184,24 @@ pub fn adapter_only_evidence_cannot_close_ingress_gate_test() {
   |> verify
   |> result.is_error
   |> should.be_true
+}
+
+pub fn callback_only_and_partial_envelopes_block_even_with_all_checks_test() {
+  list.each(
+    [
+      "{\"callback_passed\":true,\"scope\":\"actual_gateway_cli\"}",
+      "{\"response\":{\"status\":200,\"headers\":[],\"body\":\"ok\"}}",
+      "{\"response\":{\"status\":200,\"headers\":[]},\"upstream\":[]}",
+      "{\"response\":{\"status\":200,\"headers\":{\"X-Test\":\"a\"},\"body\":\"ok\"},\"upstream\":[]}",
+      "{\"response\":{\"status\":200,\"headers\":[[\"X-Test\"]],\"body\":\"ok\"},\"upstream\":[]}",
+      "{\"response\":{\"status\":200,\"headers\":[],\"body\":\"ok\"},\"upstream\":[{\"callback_passed\":true}]}",
+      "{\"response\":{\"status\":200,\"headers\":[],\"body\":\"ok\"},\"upstream\":[{\"method\":false,\"path\":null,\"headers\":{},\"body\":null}]}",
+    ],
+    fn(observations) {
+      lab.Evidence(..evidence(), observations:)
+      |> verify
+      |> result.is_error
+      |> should.be_true
+    },
+  )
 }

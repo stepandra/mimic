@@ -95,6 +95,8 @@ class Upstream(socketserver.BaseRequestHandler):
                                               "response": dict(response, status="completed")}, False))
         except (EOFError, OSError):
             pass
+        finally:
+            self.server.closed.set()
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -121,6 +123,7 @@ def connect(port, auth=CLIENT, extras="", version="1.1", create=None):
 def exercise(flow):
     with Server(("127.0.0.1", 0), Upstream) as upstream:
         upstream.handshakes, upstream.creates = [], []
+        upstream.closed = threading.Event()
         worker = threading.Thread(target=upstream.serve_forever, daemon=True)
         worker.start()
         account = {"provider": "codex", "auth_mode": "oauth", "id": "selected",
@@ -175,9 +178,18 @@ def exercise(flow):
                 assert headers["Chatgpt-Account-Id"] == "synthetic-codex-account"
                 assert CLIENT not in str(headers)
                 assert upstream.creates[0]["model"] == "gpt-5.5"
+                flow.cli("key", "revoke", str(flow.config), "client")
+                before = len(upstream.creates)
+                sock.sendall(frame(CREATE, True))
+                opcode, payload = reader.event(False)
+                value = json.loads(payload) if opcode == 1 else {}
+                assert opcode == 8 or value.get("type") == "error", (
+                    "revoked live connection accepted another request"
+                )
+                assert len(upstream.creates) == before
+                assert upstream.closed.wait(5), "revoked upstream connection not cancelled"
             finally:
                 sock.close()
-            flow.cli("key", "revoke", str(flow.config), "client")
             sock, _, response = connect(flow.port, create=CREATE)
             sock.close()
             assert "401" in response and len(upstream.handshakes) == 1
@@ -201,6 +213,7 @@ def main():
     print(json.dumps({"scope": "actual_root_gateway_ws_cli", "synthetic": True,
                       "opt_in_auth_raw_handshake_coalesced_create": True,
                       "selected_account": True, "revocation": True,
+                      "live_connection_revocation_before_send": True,
                       "shipment": bool(args.shipment), "live_provider": False}))
 
 

@@ -18,23 +18,43 @@ pub fn kimi(
 ) -> Result(Nil, String) {
   use device <- result.try(ir.string_field(identity, "device_id"))
   let config = oauth.Config(..config, device_id: device)
+  use enrollment <- with_enrollment(store, key)
   use pending <- result.try(oauth.start(config, refresh.kimi, now_ms()))
   let prompt = oauth.user_prompt(pending)
   announce("Open " <> prompt.1 <> " and authorize code " <> prompt.0)
   poll(
     config,
     pending,
-    store,
-    key,
+    enrollment,
     monotonic_ms(Millisecond) + oauth.max_poll_ms,
   )
+}
+
+/// Reserve before network I/O. Shared store tickets are the sole authority:
+/// an admin mutation wins, and no failure falls back to an unconditional save.
+fn with_enrollment(
+  store: storage.Store,
+  key: String,
+  action: fn(runtime_store.Enrollment) -> Result(Nil, String),
+) -> Result(Nil, String) {
+  use enrollment <- result.try(
+    runtime_store.begin_enrollment(store, key)
+    |> result.replace_error("Kimi enrollment unavailable"),
+  )
+  case action(enrollment) {
+    Ok(Nil) -> Ok(Nil)
+    Error(error) ->
+      case runtime_store.cancel_enrollment(enrollment) {
+        Ok(Nil) -> Error(error)
+        Error(_) -> Error("Kimi enrollment failed; cancellation unconfirmed")
+      }
+  }
 }
 
 fn poll(
   config: oauth.Config,
   pending: oauth.Device,
-  store: storage.Store,
-  key: String,
+  enrollment: runtime_store.Enrollment,
   deadline: Int,
 ) -> Result(Nil, String) {
   let remaining = deadline - monotonic_ms(Millisecond)
@@ -51,11 +71,11 @@ fn poll(
       case next {
         oauth.Pending(next, wait) -> {
           process.sleep(int.min(remaining, wait))
-          poll(config, next, store, key, deadline)
+          poll(config, next, enrollment, deadline)
         }
         oauth.Authorized(credential) -> {
           use material <- result.try(oauth.material(config, credential))
-          runtime_store.save(store, key, material)
+          runtime_store.commit_enrollment(enrollment, material)
           |> result.replace_error("Kimi credential persistence failed")
         }
       }

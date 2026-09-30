@@ -67,17 +67,30 @@ def launch_target(plan, origin):
 
 
 def stop(child):
-    if child.poll() is None:
+    # The session can outlive its leader. Always signal the group, including
+    # after an early leader exit, and kill residual descendants after grace.
+    # This is same-PGID cleanup only: setsid/setpgid can escape it. Candidate
+    # execution is blocked separately until OS descendant containment exists.
+    try:
         os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
         try:
             child.wait(timeout=3)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL)
             child.wait(timeout=3)
-    child.stdout.close()
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if child.stdout is not None:
+            child.stdout.close()
 
 
-def exercise(plan, fixture):
+def exercise(plan, fixture, launcher=launch_target):
     upstream = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -113,7 +126,7 @@ def exercise(plan, fixture):
     thread.start()
     child = None
     try:
-        child, ready = launch_target(plan, "http://127.0.0.1:" + str(server.server_port))
+        child, ready = launcher(plan, "http://127.0.0.1:" + str(server.server_port))
         unauthorized = observe(ready["port"], fixture, False)
         unauth_upstream = len(upstream)
         response = observe(ready["port"], fixture)

@@ -50,7 +50,13 @@ class CodexUpstream(HTTP["Upstream"]):
         with self.server.codex_lock:
             self.server.codex_requests.append((self.path, dict(self.headers), body))
             count = len(self.server.codex_requests)
-        self.reply(200, response_sse(f"resp_synthetic_{count}", count == 1),
+        # The default-off phase already sent one request. Identify a first turn
+        # by its normalized input, not the server's lifetime request counter.
+        first_turn = body.get("input") == [{
+            "type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": "synthetic first"}],
+        }]
+        self.reply(200, response_sse(f"resp_synthetic_{count}", first_turn),
                    "text/event-stream")
 
 
@@ -114,7 +120,9 @@ def exercise(flow):
     with flow.running():
         status, body = call(flow, first)
         assert status == 200
-        receipt = json.loads(body)["id"]
+        returned = json.loads(body)
+        assert returned["output"][0]["encrypted_content"] == "synthetic-opaque"
+        receipt = returned["id"]
         assert receipt == "resp_synthetic_2"
         next_request = dict(prior, previous_response_id=receipt)
         before = len(flow.upstream.codex_requests)

@@ -1,5 +1,9 @@
 # Devin source contract — CPA pin, not measured parity
 
+> Historical first-slice notes. Current behavior and deliberate differences are
+> in [EXPANSION.md](EXPANSION.md); immutable inputs are in `CPA_SHA256SUMS`.
+> One-shot-only statements below describe v1, retained as provenance.
+
 CPA revision: `acdace936fa7df2905500c7f5e0a97d683138dea`.
 MIMIC base: `c3ca7e805b8e4c3f8271468fbbe46271a5b0e8f4`.
 

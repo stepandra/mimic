@@ -130,10 +130,9 @@ pub fn invalid_utf8_and_semantic_loss_test() {
     pb.Bytes(3, <<237, 160>>),
     pb.Bytes(3, <<244, 144>>),
     pb.Bytes(6, <<>>),
-    pb.text(9, "thinking"),
-    pb.Bytes(28, <<>>),
-    pb.Varint(5, 10),
-    pb.message(7, [pb.Varint(5, 2)]),
+    pb.Bytes(29, <<>>),
+    pb.Varint(5, 99),
+    pb.message(7, [pb.Varint(99, 2)]),
   ]
   |> list.each(fn(field) {
     response.feed(response.new(), connect.envelope(pb.encode([field])))
@@ -149,7 +148,7 @@ pub fn protobuf_field_order_and_monotonic_stop_test() {
   |> list.each(fn(fields) {
     let assert Ok(#(decoder, events)) =
       response.feed(response.new(), connect.envelope(pb.encode(fields)))
-    events |> should.equal([response.Text("hi")])
+    events |> should.equal([response.Text("hi"), response.Reason(2)])
     response.feed(
       decoder,
       connect.envelope(pb.encode([pb.Varint(5, 0), pb.text(3, "late")])),

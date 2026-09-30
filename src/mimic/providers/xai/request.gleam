@@ -172,6 +172,15 @@ fn prepare_choice(body, refs) {
 /// Shared stream decoder owns framing, lifecycle, usage and cancellation.
 /// Only provider-specific names are changed; usage and unknown fields survive.
 pub fn restore_event(event: ir.Value, refs: List(tools.Ref)) -> ir.Value {
+  // These events may carry the function name at top level rather than inside
+  // an item. Restore only the exact identity-bearing event kinds, after shared
+  // raw validation; never traverse argument strings or arbitrary name fields.
+  let event = case ir.string_field(event, "type") {
+    Ok("response.function_call_arguments.delta")
+    | Ok("response.function_call_arguments.done") ->
+      tools.restore_call(event, refs)
+    _ -> event
+  }
   let event = case ir.field(event, "item") {
     Some(item) -> tools.set(event, "item", restore_item(item, refs))
     None -> event

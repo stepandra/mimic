@@ -492,6 +492,25 @@ fn arguments_event(
     item.kind == kind && !item.arguments_done,
     "Responses arguments event on closed or wrong-kind tool",
   ))
+  // These fields may be omitted, but supplied raw identities must agree with
+  // output_item.added. Alias restoration must not hide a namespace change.
+  use _ <- result.try(
+    list.try_each(
+      [#("name", item.tool_name), #("call_id", item.call_id)],
+      fn(identity) {
+        case ir.field(value, identity.0) {
+          None -> Ok(Nil)
+          Some(ir.String(supplied)) ->
+            ensure(
+              identity.1 == Some(supplied),
+              "Responses arguments event tool identity mismatch",
+            )
+          Some(_) ->
+            Error("Responses arguments event identity must be a string")
+        }
+      },
+    ),
+  )
   let done = string.ends_with(name, ".done")
   let field = case done, custom {
     False, _ -> "delta"

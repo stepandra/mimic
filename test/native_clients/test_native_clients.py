@@ -1,6 +1,7 @@
 """Harness contract tests, NOT native client/provider compatibility evidence."""
 
 import base64
+import copy
 import hashlib
 import http.client
 import importlib.util
@@ -26,6 +27,40 @@ def load(name):
 
 
 qa, live, harness, fixtures = [load(name) for name in ["qa", "live", "harness", "fixtures"]]
+
+
+def synthetic_receipt():
+    return {"image_id": "sha256:" + "a" * 64, "inputs": qa.acquisition_fingerprint(),
+            "artifacts": qa.pinned_artifacts()}
+
+
+def synthetic_child_report(argv, status="passed"):
+    """Contract fixture only: these values are never evidence of native execution."""
+    client = argv[argv.index("--client") + 1]
+    workflow = argv[argv.index("--workflow") + 1]
+    request_id = argv[argv.index("--request-id") + 1]
+    pin = qa.LOCK["clients"][client]
+    binding = qa.contract.provenance(
+        pin, qa.acquisition_fingerprint(), "b" * 64, pin["executable_sha256"])
+    report = qa.contract.empty_report(client, workflow, request_id, binding)
+    report["status"] = status
+    if status != "passed":
+        report["reason"] = "privilege_containment_missing" if status == "blocked" else "harness_error"
+        return copy.deepcopy(report)
+    observation = {"path": "/v1/messages" if client == "claude" else "/backend-api/codex/responses",
+                   "stream": True, "model_ok": True, "upstream_auth_ok": True,
+                   "client_credential_not_forwarded": True, "tool_result_canary": False,
+                   "history_items": 1}
+    report["observations"] = [observation]
+    if workflow == "cancel":
+        report.update(client_exits=[-2], native_stream_event_observed=True, upstream_disconnect=True)
+    else:
+        turns = 2 if workflow == "continuation" else 1
+        report.update(client_exits=[0] * turns, client_output_checks=[True] * turns, output_marker=True)
+        if workflow in ("tool", "continuation"):
+            report["observations"].append(dict(
+                observation, history_items=3, tool_result_canary=workflow == "tool"))
+    return copy.deepcopy(report)
 
 
 class AcquisitionTests(unittest.TestCase):
@@ -140,8 +175,7 @@ class ContainmentTests(unittest.TestCase):
     def test_cleanup_after_timeout(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
-            (work / "acquisition.json").write_text(json.dumps({
-                "image_id": "sha256:" + "a" * 64, "inputs": qa.acquisition_fingerprint()}))
+            (work / "acquisition.json").write_text(json.dumps(synthetic_receipt()))
             calls = []
 
             def docker(args, timeout=30):
@@ -151,7 +185,7 @@ class ContainmentTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, b"", b"")
 
             with patch.object(qa, "WORK", work), patch.object(qa, "require_docker"), \
-                    patch.object(qa, "shipment_copy", return_value="synthetic"), \
+                    patch.object(qa, "shipment_copy", return_value="b" * 64), \
                     patch.object(qa, "docker", side_effect=docker):
                 report = qa.offline(work, ["claude"], ["sse"])
             self.assertEqual(report["status"], "blocked")
@@ -161,17 +195,16 @@ class ContainmentTests(unittest.TestCase):
     def test_inner_containment_block_is_not_compatibility_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
-            (work / "acquisition.json").write_text(json.dumps({
-                "image_id": "sha256:" + "a" * 64, "inputs": qa.acquisition_fingerprint()}))
+            (work / "acquisition.json").write_text(json.dumps(synthetic_receipt()))
 
             def docker(args, timeout=30):
                 if args[0] == "run":
-                    return subprocess.CompletedProcess(args, 2, json.dumps({
-                        "status": "blocked", "reason": "privilege_containment_missing"}).encode(), b"")
+                    return subprocess.CompletedProcess(
+                        args, 2, json.dumps(synthetic_child_report(args, "blocked")).encode(), b"")
                 return subprocess.CompletedProcess(args, 0, b"", b"")
 
             with patch.object(qa, "WORK", work), patch.object(qa, "require_docker"), \
-                    patch.object(qa, "shipment_copy", return_value="synthetic"), \
+                    patch.object(qa, "shipment_copy", return_value="b" * 64), \
                     patch.object(qa, "docker", side_effect=docker):
                 report = qa.offline(work, ["claude"], ["sse"])
             self.assertEqual(report["status"], "blocked")
@@ -236,6 +269,143 @@ class FixtureTests(unittest.TestCase):
             connection.close()
             self.assertTrue(server.observations[0]["tool_result_canary"])
             self.assertTrue(server.observations[0]["upstream_auth_ok"])
+
+
+class EvidenceValidationTests(unittest.TestCase):
+    def offline_report(self, payload, exit_code=0, workflow="sse", client="claude"):
+        """Exercise the actual parent acceptance seam, never a real Docker command."""
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            (work / "acquisition.json").write_text(json.dumps(synthetic_receipt()))
+
+            def docker(args, timeout=30):
+                if args[0] == "run":
+                    body = payload(args) if callable(payload) else payload
+                    raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+                    return subprocess.CompletedProcess(args, exit_code, raw, b"")
+                return subprocess.CompletedProcess(args, 0, b"", b"")
+
+            with patch.object(qa, "WORK", work), patch.object(qa, "require_docker"), \
+                    patch.object(qa, "shipment_copy", return_value="b" * 64), \
+                    patch.object(qa, "docker", side_effect=docker), \
+                    patch.object(subprocess, "run", side_effect=AssertionError("no real process")), \
+                    patch.object(qa.urllib.request, "urlopen", side_effect=AssertionError("no acquisition")):
+                return qa.offline(work, [client], [workflow])
+
+    def test_status_only_pass_is_rejected_at_parent_boundary(self):
+        report = self.offline_report({"status": "passed"})
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["results"][0]["reason"], "invalid_container_report")
+
+    def test_wrong_workflow_identity_is_rejected(self):
+        report = self.offline_report({
+            "status": "passed", "client": "codex", "workflow": "tool",
+            "fixture_sha256": "0" * 64})
+        self.assertEqual(report["status"], "failed")
+
+    def test_complete_synthetic_sse_contracts_are_accepted_for_both_clients(self):
+        for client in ["claude", "codex"]:
+            with self.subTest(client=client):
+                result = self.offline_report(synthetic_child_report, client=client)
+                self.assertEqual(result["status"], "passed")
+                self.assertEqual(result["results"][0]["client"], client)
+                self.assertEqual(result["results"][0]["workflow"], "sse")
+
+    def test_unqualified_workflows_cannot_report_pass_or_start_a_client(self):
+        for client in ["claude", "codex"]:
+            for workflow in ["tool", "continuation", "cancel"]:
+                with self.subTest(client=client, workflow=workflow):
+                    with patch.object(qa, "require_docker", side_effect=AssertionError("no Docker")), \
+                            patch.object(subprocess, "run", side_effect=AssertionError("no process")):
+                        report = qa.offline(Path("/not-read"), [client], [workflow])
+                    self.assertEqual(report["status"], "blocked")
+                    self.assertEqual(len(report["results"]), 1)
+                    argv = qa.container_args("synthetic", "image", "/shipment", client, workflow)
+                    forged = synthetic_child_report(argv)
+                    with self.assertRaises(ValueError):
+                        qa.contract.validate(json.dumps(forged).encode(), 0, client, workflow,
+                                             "synthetic", forged["provenance"])
+                    with patch.object(harness, "child", side_effect=AssertionError("no child")), \
+                            patch.object(harness.Path, "mkdir", side_effect=AssertionError("no runtime state")):
+                        blocked = harness.workflow(client, workflow, "synthetic", {})
+                    self.assertEqual(blocked["status"], "blocked")
+                    self.assertEqual(blocked["reason"], "workflow_evidence_contract_unimplemented")
+
+    def test_every_required_evidence_field_is_mandatory(self):
+        args = qa.container_args("synthetic", "image", "/shipment", "claude", "sse")
+        for field in synthetic_child_report(args):
+            with self.subTest(field=field):
+                def missing(argv):
+                    value = synthetic_child_report(argv)
+                    del value[field]
+                    return value
+                self.assertEqual(self.offline_report(missing)["status"], "failed")
+
+    def test_bound_identity_and_provenance_cannot_be_rewritten(self):
+        mutations = [
+            ("schema", "wrong"), ("client", "codex"), ("workflow", "cancel"),
+            ("request_id", "old-invocation"), ("provenance", {}),
+        ]
+        for field, replacement in mutations:
+            with self.subTest(field=field):
+                def altered(argv):
+                    return dict(synthetic_child_report(argv), **{field: replacement})
+                result = self.offline_report(altered)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["results"][0]["reason"], "invalid_container_report")
+        for field in ["client_pin", "source_sha256", "shipment_sha256", "executable_sha256"]:
+            with self.subTest(provenance=field):
+                def altered(argv):
+                    value = synthetic_child_report(argv)
+                    value["provenance"][field] = "wrong"
+                    return value
+                self.assertEqual(self.offline_report(altered)["status"], "failed")
+
+    def test_protocol_and_native_success_are_required(self):
+        mutations = [
+            ("client_exits", []), ("client_exits", [1]), ("client_exits", [False]),
+            ("client_exits", [0, 0]), ("client_output_checks", []),
+            ("client_output_checks", [False]), ("client_output_checks", [1]),
+            ("output_marker", False), ("output_marker", 1), ("observations", []),
+        ]
+        for field, replacement in mutations:
+            with self.subTest(field=field, replacement=replacement):
+                self.assertEqual(self.offline_report(
+                    lambda argv: dict(synthetic_child_report(argv), **{field: replacement})
+                )["status"], "failed")
+        for field in ["path", "stream", "model_ok", "upstream_auth_ok",
+                      "client_credential_not_forwarded", "history_items"]:
+            with self.subTest(observation=field):
+                def altered(argv):
+                    value = synthetic_child_report(argv)
+                    value["observations"][0][field] = "/wrong" if field == "path" else False
+                    return value
+                self.assertEqual(self.offline_report(altered)["status"], "failed")
+
+    def test_nonqualifiable_workflows_remain_in_the_eight_row_inventory(self):
+        with patch.object(qa, "require_docker", side_effect=qa.Blocked("no_daemon")):
+            report = qa.offline(Path("/not-read"), ["claude", "codex"], qa.WORKFLOWS)
+        self.assertEqual(len(report["results"]), 8)
+        self.assertEqual({(row["client"], row["workflow"]) for row in report["results"]},
+                         {(client, workflow) for client in ["claude", "codex"]
+                          for workflow in qa.WORKFLOWS})
+        self.assertTrue(all(row["status"] == "blocked" for row in report["results"]))
+
+    def test_malformed_extra_duplicate_and_oversized_reports_are_rejected(self):
+        for payload in [b"null", b"[]", b"{", b'{"status":"passed","status":"blocked"}',
+                        b'{"value":NaN}', b" " * 65537]:
+            with self.subTest(payload=payload[:40]):
+                self.assertEqual(self.offline_report(payload)["status"], "failed")
+        self.assertEqual(self.offline_report(
+            lambda argv: dict(synthetic_child_report(argv), raw_private_output="not permitted")
+        )["status"], "failed")
+
+    def test_container_exit_and_child_status_must_agree(self):
+        for status, exit_code in [("passed", 1), ("passed", 2), ("blocked", 0), ("failed", 0)]:
+            with self.subTest(status=status, exit_code=exit_code):
+                self.assertEqual(self.offline_report(
+                    lambda argv: synthetic_child_report(argv, status), exit_code=exit_code
+                )["status"], "failed")
 
 
 class LiveGateTests(unittest.TestCase):

@@ -4,6 +4,7 @@ import gleam/result
 import gleam/string
 import mimic/dialect/responses
 import mimic/ir
+import mimic/providers/codex/lite
 import mimic/providers/codex/normalize
 import mimic/providers/codex/oauth
 import mimic/providers/codex/routes
@@ -40,6 +41,14 @@ pub fn prepare(
   reasoning_efforts: List(String),
 ) -> Result(Prepared, String) {
   use decoded <- result.try(responses.request_from_value(body))
+  use marked_lite <- result.try(lite.enabled(body))
+  let is_lite = marked_lite || route.operation == routes.Lite
+  use _ <- result.try(case is_lite, route.operation, route.transport {
+    True, routes.Compact, _ -> Error("Codex compact is not Responses-lite")
+    True, _, routes.Websocket ->
+      Error("Codex Responses-lite WebSocket requires separate support")
+    _, _, _ -> Ok(Nil)
+  })
   use _ <- result.try(case route.transport, ir.field(body, "generate") {
     routes.Websocket, Some(value) ->
       ir.as_bool(value) |> result.map(fn(_) { Nil })
@@ -67,12 +76,24 @@ pub fn prepare(
   )
   use target <- result.try(case route.operation, route.transport {
     routes.Responses, _ -> Ok("/backend-api/codex/responses")
+    routes.Lite, routes.Http -> Ok("/backend-api/codex/responses")
     routes.Compact, routes.Http -> Ok("/backend-api/codex/responses/compact")
     _, _ -> Error("Codex operation is unsupported on this transport")
   })
   use identity <- result.try(session.identity(context.scope))
   use source <- result.try(ir.required(body, "input"))
   use items <- result.try(normalize.input(source))
+  use _ <- result.try(
+    case
+      route.transport == routes.Http
+      && list.any(items, fn(item) {
+        ir.field(item, "type") == Some(ir.String("item_reference"))
+      })
+    {
+      True -> Error("Codex HTTP requires complete items, not item references")
+      False -> Ok(Nil)
+    },
+  )
   let previous = decoded.previous_response_id
   use history <- result.try(continue_input(
     items,
@@ -94,7 +115,7 @@ pub fn prepare(
       "temperature", "top_p", "truncation", "prompt_cache_options",
       "prompt_cache_retention", "safety_identifier", "stream_options",
     ])
-  let body = case route.native, ir.field(body, "instructions") {
+  let body = case route.native || is_lite, ir.field(body, "instructions") {
     False, None | False, Some(ir.Null) ->
       normalize.put(body, "instructions", ir.String(""))
     _, _ -> body
@@ -131,6 +152,10 @@ pub fn prepare(
       }
     _ -> normalize.remove(body, ["parallel_tool_calls"])
   }
+  use body <- result.try(case is_lite {
+    True -> lite.normalize(body)
+    False -> Ok(body)
+  })
   use body <- result.try(service_tier(body))
   use decoded <- result.try(case route.operation {
     routes.Compact -> responses.decode_compact_request(ir.stringify(body))
@@ -161,7 +186,16 @@ pub fn prepare(
       Header("Originator", "codex_cli_rs"),
       Header("Session-Id", identity.session_id),
       Header("X-Codex-Routing-Hint", hint),
-    ],
+    ]
+      |> fn(headers) {
+        case is_lite {
+          True -> [
+            Header("X-OpenAI-Internal-Codex-Responses-Lite", "true"),
+            ..headers
+          ]
+          False -> headers
+        }
+      },
     body,
     identity,
     context.scope.credential_id,

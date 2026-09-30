@@ -1,5 +1,9 @@
 # Devin validation ledger
 
+> Historical v1 evidence. Current executed evidence and blocked gates are in
+> [EXPANSION.md](EXPANSION.md). `verify.py` now tests the actual checkout at the
+> published base ancestry and no longer creates source-copy overlays.
+
 This file records executed evidence, not intended coverage.
 
 ## Pure protocol gate

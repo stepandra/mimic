@@ -1,5 +1,8 @@
 # Devin integration handoff
 
+> Historical v1 handoff, superseded by [EXPANSION.md](EXPANSION.md).
+> Do not use old sibling-checkout overlays for current verification.
+
 ## Status and ownership
 
 **Experimental loopback-only, one-shot text slice; not Devin parity.**

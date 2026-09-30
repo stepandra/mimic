@@ -15,6 +15,8 @@ import time
 import urllib.request
 import uuid
 
+import evidence as contract
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 WORK = ROOT / ".tools/native-clients"
@@ -102,8 +104,12 @@ def extract_regular_member(package, entry, destination):
 
 
 def acquisition_fingerprint():
-    files = ["Dockerfile", "clients.lock.json", "harness.py", "fixtures.py"]
-    return {name: digest(HERE / name) for name in files}
+    return contract.source_hashes(HERE)
+
+
+def pinned_artifacts():
+    return {name: {field: pin[field] for field in ("archive_sha256", "executable_sha256")}
+            for name, pin in LOCK["clients"].items()}
 
 
 def extract_codex_tree(archive, destination):
@@ -137,6 +143,8 @@ def acquire(artifacts_only=False):
         extract_binary(path, pin["member"], context / name)
         artifacts[name] = {"archive_sha256": digest(path),
                            "executable_sha256": digest(context / name)}
+    if artifacts != pinned_artifacts():
+        raise Blocked("acquired_artifacts_do_not_match_lock")
     (WORK / "artifacts.json").write_text(json.dumps(artifacts, indent=2) + "\n")
     if artifacts_only:
         return artifacts
@@ -191,7 +199,7 @@ def shipment_copy(source, destination):
         hashes[str(relative)] = digest(target)
     if "mimic/ebin/mimic.beam" not in hashes:
         raise Blocked("not_a_mimic_shipment")
-    return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+    return contract.shipment_hash(destination)
 
 
 def container_args(name, image, shipment, client, workflow):
@@ -203,7 +211,7 @@ def container_args(name, image, shipment, client, workflow):
             "--tmpfs", "/work:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=700",
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700",
             "--mount", f"type=bind,src={shipment},dst=/shipment,readonly",
-            image, "--client", client, "--workflow", workflow]
+            image, "--client", client, "--workflow", workflow, "--request-id", name]
 
 
 def offline(shipment, clients, workflows):
@@ -213,18 +221,36 @@ def offline(shipment, clients, workflows):
               "client_pins": {client: LOCK["clients"][client] for client in clients},
               "fixture_sha256": digest(HERE / "fixtures.py"), "results": [],
               "unimplemented": ["native_login", "device", "pkce", "refresh_restart",
-                                "long_sse", "websocket"],
+                                "long_sse", "websocket", "tool_call_result_binding",
+                                "continuation_phase_session_binding", "cancel_request_retry_binding",
+                                "daemon_lifetime_parent_death_fault_tests"],
               "inventory_only": LOCK["inventory_only"]}
+    runnable = [name for name in workflows if name in contract.QUALIFIABLE_WORKFLOWS]
+    for client in clients:
+        for workflow in workflows:
+            if workflow not in contract.QUALIFIABLE_WORKFLOWS:
+                report["results"].append({
+                    "client": client, "workflow": workflow, "status": "blocked",
+                    "reason": "workflow_evidence_contract_unimplemented",
+                    "client_exits": [], "observations": []})
+    if not runnable:
+        report["status"] = "blocked"
+        return report
     try:
         require_docker()
         try:
             receipt = json.loads((WORK / "acquisition.json").read_text())
         except (OSError, ValueError) as error:
             raise Blocked("run_acquire_first") from error
+        if not isinstance(receipt, dict) or set(receipt) != {"image_id", "inputs", "artifacts"}:
+            raise Blocked("invalid_acquisition_receipt")
         if receipt["inputs"] != acquisition_fingerprint():
             raise Blocked("acquisition_stale")
+        if receipt["artifacts"] != pinned_artifacts():
+            raise Blocked("acquisition_artifacts_do_not_match_lock")
         image = receipt["image_id"]
-        if not image.startswith("sha256:") or len(image) != 71:
+        if (not isinstance(image, str) or not image.startswith("sha256:") or len(image) != 71
+                or any(char not in "0123456789abcdef" for char in image[7:])):
             raise Blocked("immutable_image_id_required")
         if docker(["image", "inspect", image]).returncode:
             raise Blocked("acquired_image_missing")
@@ -234,21 +260,22 @@ def offline(shipment, clients, workflows):
             # Readable by the unprivileged container UID, not writable.
             Path(temporary).chmod(0o755)
             for client in clients:
-                for workflow in workflows:
+                for workflow in runnable:
                     name = "mimic-native-" + uuid.uuid4().hex
+                    binding = contract.provenance(
+                        LOCK["clients"][client], receipt["inputs"], report["shipment_sha256"],
+                        LOCK["clients"][client]["executable_sha256"])
                     try:
                         result = docker(container_args(name, image, temporary, client, workflow),
                                         timeout=120)
                         try:
-                            evidence = json.loads(result.stdout)
-                            if evidence["status"] not in ["passed", "failed", "blocked"]:
-                                raise ValueError()
-                        except (ValueError, KeyError):
-                            evidence = {"status": "failed", "reason": "invalid_container_report"}
-                        if result.returncode and evidence["status"] == "passed":
-                            evidence = {"status": "failed", "reason": "container_exit_mismatch"}
+                            evidence = contract.validate(
+                                result.stdout, result.returncode, client, workflow, name, binding)
+                        except (ValueError, TypeError, RecursionError):
+                            evidence = {"client": client, "workflow": workflow,
+                                        "status": "failed", "reason": "invalid_container_report"}
                         report["results"].append({
-                            **evidence, "client": client, "workflow": workflow,
+                            **evidence,
                             "pin": LOCK["clients"][client], "container_exit": result.returncode})
                     finally:
                         if docker(["rm", "--force", name]).returncode:

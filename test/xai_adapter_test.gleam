@@ -198,7 +198,9 @@ pub fn tool_peer(status: Int) {
       <> item
       <> "}\n\n"
     let arguments =
-      "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"item_id\":\"item_synthetic\",\"arguments\":\"{}\"}\n\n"
+      "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"item_id\":\"item_synthetic\",\"call_id\":\"call_synthetic\",\"name\":\""
+      <> name
+      <> "\",\"arguments\":\"{}\"}\n\n"
     let done =
       "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":"
       <> item
@@ -284,30 +286,41 @@ pub fn selected_account_origin_and_tool_map_are_per_open_test() {
     let assert Ok(catalog) = registry.new([model])
     let assert Ok(pool) = runtime.start(store, catalog, accounts)
     let http = adapter.selected_http(config, None)
-    let open = fn(id, tool) {
+    let open = fn(id, tool, mode) {
+      let stream = case mode {
+        contracts.Buffered -> "false"
+        contracts.Streaming -> "true"
+      }
       runtime.open(
         pool,
         http,
         contracts.Request(
-          ..request(contracts.Buffered),
+          ..request(mode),
           auth_mode: name,
           required: [contracts.Tools],
           pinned_account: Some(id),
           session: "synthetic-session-" <> id,
           body: "{\"model\":\"grok-4.7\",\"input\":[],\"tools\":["
             <> tool
-            <> "]}",
+            <> "],\"stream\":"
+            <> stream
+            <> "}",
         ),
       )
     }
     // Hold both actual streams open; each has a different alias meaning,
     // origin and credential. Consume in reverse order to catch global caches.
     let assert Ok(a) =
-      open("0", "{\"type\":\"function\",\"name\":\"web_search\"}")
+      open(
+        "0",
+        "{\"type\":\"function\",\"name\":\"web_search\"}",
+        contracts.Buffered,
+      )
     let assert Ok(b) =
       open(
         "1",
         "{\"type\":\"namespace\",\"name\":\"shell\",\"tools\":[{\"type\":\"function\",\"name\":\"run\"}]}",
+        contracts.Buffered,
       )
     let assert Ok(b) = adapter.collect(b, "responses")
     let assert Ok(a) = adapter.collect(a, "responses")
@@ -319,6 +332,51 @@ pub fn selected_account_origin_and_tool_map_are_per_open_test() {
         let assert Some(ir.Array([call])) = ir.field(document, "output")
         ir.string_field(call, "name") |> should.equal(Ok(pair.1))
         ir.field(call, "namespace") |> should.equal(pair.2)
+      },
+    )
+    process.receive(first.2, 1000)
+    |> should.equal(Ok(#(Ok("Bearer synthetic-0"), "clientfn_web_search")))
+    process.receive(second.2, 1000)
+    |> should.equal(Ok(#(Ok("Bearer synthetic-1"), "shell__run")))
+    // The same selected mappings must agree in top-level argument events,
+    // output-item events and final output, not merely in buffered collection.
+    list.each(
+      [
+        #(
+          "0",
+          "{\"type\":\"function\",\"name\":\"web_search\"}",
+          "web_search",
+          None,
+        ),
+        #(
+          "1",
+          "{\"type\":\"namespace\",\"name\":\"shell\",\"tools\":[{\"type\":\"function\",\"name\":\"run\"}]}",
+          "run",
+          Some(ir.String("shell")),
+        ),
+      ],
+      fn(case_) {
+        let assert Ok(opened) = open(case_.0, case_.1, contracts.Streaming)
+        let seen = process.new_subject()
+        adapter.run(opened, fn(event) {
+          case event.name {
+            "response.function_call_arguments.done" -> {
+              ir.string_field(event.document, "name")
+              |> should.equal(Ok(case_.2))
+              ir.field(event.document, "namespace") |> should.equal(case_.3)
+              ir.string_field(event.document, "call_id")
+              |> should.equal(Ok("call_synthetic"))
+              ir.string_field(event.document, "arguments")
+              |> should.equal(Ok("{}"))
+              process.send(seen, Nil)
+            }
+            _ -> Nil
+          }
+          Ok(responses_http.Continue)
+        })
+        |> should.be_ok
+        process.receive(seen, 1000) |> should.be_ok
+        process.receive(seen, 0) |> should.be_error
       },
     )
     process.receive(first.2, 1000)

@@ -2,7 +2,6 @@
 
 import argparse
 import contextlib
-import hashlib
 import http.client
 import json
 import os
@@ -14,6 +13,7 @@ import subprocess
 import tempfile
 import time
 
+import evidence as contract
 from fixtures import CANARY, CLIENT_KEY, MARKER, UPSTREAM_KEY, Fixture
 
 BASE_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/work/home",
@@ -207,13 +207,15 @@ def ready(process, gateway_port):
     raise RuntimeError("gateway_readiness_timeout")
 
 
-def workflow(client, name):
+def workflow(client, name, request_id, binding):
+    result = contract.empty_report(client, name, request_id, binding)
+    if name not in contract.QUALIFIABLE_WORKFLOWS:
+        result.update(status="blocked", reason="workflow_evidence_contract_unimplemented")
+        return result
     work = Path("/work")
     for path in ["home/.claude", "home/.codex", "project", "state"]:
         (work / path).mkdir(parents=True, exist_ok=True)
     private(work / "project/canary.txt", CANARY)
-    result = {"client": client, "workflow": name, "status": "failed",
-              "client_exits": [], "output_marker": False, "observations": []}
     with Fixture(client, name) as fixture:
         try:
             gateway_port = port()
@@ -244,6 +246,7 @@ def workflow(client, name):
                         code, output = run(argv, env, "/work/project")
                         result["client_exits"].append(code)
                         result["output_marker"] = successful_output(client, output)
+                        result["client_output_checks"].append(result["output_marker"])
                         # Do not emit native logs, prompts, headers or credentials.
                         if code or not result["output_marker"]:
                             raise RuntimeError("client_exit_or_output_assertion")
@@ -274,16 +277,30 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--client", choices=["claude", "codex"], required=True)
     parser.add_argument("--workflow", choices=["sse", "tool", "continuation", "cancel"], required=True)
+    parser.add_argument("--request-id", required=True)
     args = parser.parse_args()
+    try:
+        pin = json.loads(Path("/qa/clients.lock.json").read_text())["clients"][args.client]
+        binding = contract.provenance(
+            pin, contract.source_hashes(Path("/qa")), contract.shipment_hash(Path("/shipment")),
+            contract.digest(contract.EXECUTABLES[args.client]))
+    except (OSError, ValueError, KeyError):
+        # No native child was launched. The parent cannot validate missing provenance
+        # and will record an invalid report, never a native workflow pass.
+        result = contract.empty_report(args.client, args.workflow, args.request_id, None)
+        result.update(status="blocked", reason="provenance_unavailable")
+        print(json.dumps(result, sort_keys=True))
+        return 2
     try:
         containment()
     except RuntimeError as error:
-        print(json.dumps({"status": "blocked", "reason": str(error)}))
+        result = contract.empty_report(args.client, args.workflow, args.request_id, binding)
+        result.update(status="blocked", reason=str(error))
+        print(json.dumps(result, sort_keys=True))
         return 2
-    result = workflow(args.client, args.workflow)
-    result["fixture_sha256"] = hashlib.sha256(Path("/qa/fixtures.py").read_bytes()).hexdigest()
+    result = workflow(args.client, args.workflow, args.request_id, binding)
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["status"] == "passed" else 1
+    return {"passed": 0, "failed": 1, "blocked": 2}[result["status"]]
 
 
 if __name__ == "__main__":

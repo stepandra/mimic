@@ -62,53 +62,80 @@ pub fn feed(
   )
   use terminal <- result.try(
     list.try_fold(decoded.1, collector.terminal, fn(prior, event) {
-      case event.name {
-        "response.completed" -> {
-          // This event came from successful feed above, not an unchecked accessor.
-          use response <- result.try(
-            stream.terminal_response(event)
-            |> result.map_error(fn(_) { "invalid Codex terminal response" }),
-          )
-          use _ <- result.try(
-            case
-              ir.field(response.document, "model"),
-              ir.field(collector.prepared.body, "model")
-            {
-              Some(actual), Some(expected) if actual == expected -> Ok(Nil)
-              None, _ -> Ok(Nil)
-              _, _ -> Error("Codex response model does not match request")
-            },
-          )
-          use input <- result.try(ir.required(collector.prepared.body, "input"))
-          use input <- result.try(ir.as_array(input))
-          let history = list.append(input, response.output)
-          // Validate the entire replay, not just outstanding calls. Reusing a
-          // completed historical call ID must not mint an unusable receipt.
-          use replay <- result.try(
-            responses.request_from_value(normalize.put(
-              collector.prepared.body,
-              "input",
-              ir.Array(history),
-            )),
-          )
-          use calls <- result.try(responses.pair_input(replay, []))
-          use receipt <- result.try(session.completed(
-            collector.prepared.identity,
-            response.id,
-            calls,
-          ))
-          let receipt = session.retain_history(receipt, history)
-          Ok(Some(Completed(Completion(response, receipt))))
-        }
-        "response.incomplete" | "response.failed" | "response.cancelled" ->
-          stream.terminal_response(event)
-          |> result.map(fn(value) { Some(Unsuccessful(value)) })
-        "error" -> Ok(Some(RemoteError(event.document)))
-        _ -> Ok(prior)
-      }
+      observe(collector.prepared, prior, event)
     }),
   )
   Ok(#(Collector(..collector, stream: decoded.0, terminal: terminal), decoded.1))
+}
+
+/// Trusted gateway fold hook for shared Responses http.run_fold. Events MUST
+/// come from shared stream validation, not client JSON. Keep the accumulator
+/// private until run_fold returns Ok at clean EOF; errors discard it.
+pub fn observe(
+  prepared: request.Prepared,
+  prior: Option(Terminal),
+  event: stream.Event,
+) -> Result(Option(Terminal), String) {
+  case event.name {
+    "response.completed" -> {
+      use response <- result.try(
+        stream.terminal_response(event)
+        |> result.map_error(fn(_) { "invalid Codex terminal response" }),
+      )
+      use _ <- result.try(
+        case
+          ir.field(response.document, "model"),
+          ir.field(prepared.body, "model")
+        {
+          Some(actual), Some(expected) if actual == expected -> Ok(Nil)
+          None, _ -> Ok(Nil)
+          _, _ -> Error("Codex response model does not match request")
+        },
+      )
+      use input <- result.try(ir.required(prepared.body, "input"))
+      use input <- result.try(ir.as_array(input))
+      let history = list.append(input, response.output)
+      // Pair the entire transcript, including completed historical call IDs.
+      use replay <- result.try(
+        responses.request_from_value(normalize.put(
+          prepared.body,
+          "input",
+          ir.Array(history),
+        )),
+      )
+      use calls <- result.try(responses.pair_input(replay, []))
+      use receipt <- result.try(session.completed(
+        prepared.identity,
+        response.id,
+        calls,
+      ))
+      let receipt = session.retain_history(receipt, history)
+      use _ <- result.try(session.replay(receipt))
+      Ok(Some(Completed(Completion(response, receipt))))
+    }
+    "response.incomplete" | "response.failed" | "response.cancelled" ->
+      stream.terminal_response(event)
+      |> result.map(fn(value) { Some(Unsuccessful(value)) })
+    "error" -> Ok(Some(RemoteError(event.document)))
+    _ -> Ok(prior)
+  }
+}
+
+/// Only pass a successful clean-EOF result from shared http.run_fold here.
+/// Cancellation/downstream/protocol/transport failures never publish a receipt.
+pub fn finish_observed(
+  outcome: stream.Outcome,
+  terminal: Option(Terminal),
+) -> Result(Terminal, String) {
+  case outcome, terminal {
+    stream.Completed, Some(Completed(_) as terminal)
+    | stream.Incomplete, Some(Unsuccessful(_) as terminal)
+    | stream.Failed, Some(Unsuccessful(_) as terminal)
+    | stream.Cancelled, Some(Unsuccessful(_) as terminal)
+    | stream.RemoteError, Some(RemoteError(_) as terminal)
+    -> Ok(terminal)
+    _, _ -> Error("Codex response did not complete successfully")
+  }
 }
 
 pub fn finish(collector: Collector) -> Result(Completion, String) {
@@ -126,14 +153,9 @@ pub fn finish_terminal(collector: Collector) -> Result(Terminal, String) {
     stream.finish(collector.stream)
     |> result.map_error(fn(_) { "Codex response disconnected or truncated" }),
   )
-  case outcome, collector.terminal, collector.cancelled {
-    stream.Completed, Some(Completed(_) as terminal), False
-    | stream.Incomplete, Some(Unsuccessful(_) as terminal), False
-    | stream.Failed, Some(Unsuccessful(_) as terminal), False
-    | stream.Cancelled, Some(Unsuccessful(_) as terminal), False
-    | stream.RemoteError, Some(RemoteError(_) as terminal), False
-    -> Ok(terminal)
-    _, _, _ -> Error("Codex response did not complete successfully")
+  case collector.cancelled {
+    True -> Error("Codex response did not complete successfully")
+    False -> finish_observed(outcome, collector.terminal)
   }
 }
 

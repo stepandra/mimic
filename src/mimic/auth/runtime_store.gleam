@@ -7,6 +7,7 @@ import gleam/string
 import mimic/auth
 import mimic/auth/crypto
 import mimic/auth/storage.{type Store}
+import mimic/ir/json_guard
 import mimic/providers/contracts.{
   type AuthMaterial, ApiKey, OAuth, OAuthData, SessionToken,
 }
@@ -31,6 +32,94 @@ pub opaque type CredentialRecord {
     revision: Revision,
     raw: String,
   )
+}
+
+type EnrollmentSlot {
+  Existing(CredentialRecord)
+  Reserved(String)
+}
+
+/// Private capability bound to one store/key and exact prior slot. Never log,
+/// serialize for a client or copy into model grounding/context. Begin must
+/// succeed before announcing a callback or performing enrollment network I/O.
+pub opaque type Enrollment {
+  Enrollment(store: Store, key: String, slot: EnrollmentSlot)
+}
+
+/// Existing records are snapshotted without mutation. First enrollment reserves
+/// an absent slot with a nonce-only marker that is not an AuthMaterial. A crash
+/// leaves this reservation fail-closed until explicit admin deletion and a new
+/// begin; there is no TTL takeover. Unsafe/corrupt slots never count as absent.
+pub fn begin_enrollment(
+  store: Store,
+  key: String,
+) -> Result(Enrollment, String) {
+  use _ <- result.try(case key {
+    "" -> Error("Runtime enrollment requires a key")
+    _ -> Ok(Nil)
+  })
+  use slot <- result.try(storage.read_runtime_slot(store, key))
+  case slot {
+    Some(raw) -> {
+      use record <- result.try(decode_record(raw))
+      Ok(Enrollment(store, key, Existing(record)))
+    }
+    None -> {
+      let marker =
+        json.object([
+          #("version", json.int(1)),
+          #("kind", json.string("enrollment_pending")),
+          #("nonce", json.string(crypto.random_url_token())),
+        ])
+        |> json.to_string
+      use _ <- result.try(storage.create_runtime(store, key, marker))
+      Ok(Enrollment(store, key, Reserved(marker)))
+    }
+  }
+}
+
+/// Exact CAS only. Deletion, replacement, refresh, same-token save or winning
+/// cancellation invalidates the ticket. No retry/fallback to unconditional save.
+/// Successful enrollment installs a fresh Ready generation. Invalid material
+/// does not consume the ticket; callers must cancel on terminal workflow failure.
+pub fn commit_enrollment(
+  enrollment: Enrollment,
+  material: AuthMaterial,
+) -> Result(Nil, String) {
+  use _ <- result.try(validate(material))
+  let previous = case enrollment.slot {
+    Existing(record) -> record.raw
+    Reserved(marker) -> marker
+  }
+  let next = new_record(material, Ready)
+  storage.compare_write_runtime(
+    enrollment.store,
+    enrollment.key,
+    previous,
+    next.raw,
+  )
+}
+
+/// Durable cancellation is a competing CAS, not a rollback. For existing
+/// credentials retain all material/metadata and the refresh gate but rotate the
+/// local generation: WS/HTTP receipts invalidate, provider tokens are NOT revoked.
+/// For first enrollment compare-delete only our marker. If commit/admin mutation
+/// already won, cancel fails and never deletes or overwrites their grant.
+/// A mutation timeout is unknown outcome, never a promise of rollback.
+pub fn cancel_enrollment(enrollment: Enrollment) -> Result(Nil, String) {
+  case enrollment.slot {
+    Existing(record) ->
+      transition(
+        enrollment.store,
+        enrollment.key,
+        record,
+        record.material,
+        record.gate,
+      )
+      |> result.map(fn(_) { Nil })
+    Reserved(marker) ->
+      storage.compare_delete_runtime(enrollment.store, enrollment.key, marker)
+  }
 }
 
 pub fn record_material(record: CredentialRecord) -> AuthMaterial {
@@ -188,6 +277,16 @@ pub fn load_record(
   key: String,
 ) -> Result(CredentialRecord, String) {
   use raw <- result.try(storage.read_runtime(store, key))
+  decode_record(raw)
+}
+
+fn decode_record(raw: String) -> Result(CredentialRecord, String) {
+  // All valid material/metadata shapes fit this explicit budget. Reject decoded
+  // duplicate keys before a map decoder could hide an ambiguous on-disk record.
+  use _ <- result.try(
+    json_guard.validate(raw, 2_097_152, 32, 4096)
+    |> result.replace_error("Invalid runtime credential"),
+  )
   let decoder = {
     use version <- decode.field("version", decode.int)
     use material <- decode.then(material_decoder())

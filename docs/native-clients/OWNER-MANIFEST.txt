@@ -1,6 +1,7 @@
 scripts/native-clients/.gitignore
 scripts/native-clients/Dockerfile
 scripts/native-clients/clients.lock.json
+scripts/native-clients/evidence.py
 scripts/native-clients/fixtures.py
 scripts/native-clients/harness.py
 scripts/native-clients/live.py

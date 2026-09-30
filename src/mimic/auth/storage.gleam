@@ -71,6 +71,24 @@ pub fn read_runtime(store: Store, key: String) -> Result(String, String) {
   secure_read(store.directory, runtime_filename(key))
 }
 
+/// None means secure ENOENT only, never a corrupt/unreadable/nonprivate slot.
+/// This is a snapshot, not authority to write; create_runtime rechecks absence
+/// under the same mutation guard used by all runtime writes/deletes.
+pub fn read_runtime_slot(
+  store: Store,
+  key: String,
+) -> Result(Option(String), String) {
+  secure_runtime_slot(store.directory, runtime_filename(key))
+}
+
+pub fn create_runtime(
+  store: Store,
+  key: String,
+  contents: String,
+) -> Result(Nil, String) {
+  create_runtime_if_absent(store.directory, runtime_filename(key), contents)
+}
+
 pub fn write_runtime(
   store: Store,
   key: String,
@@ -95,6 +113,14 @@ pub fn compare_write_runtime(
 
 pub fn delete_runtime(store: Store, key: String) -> Result(Nil, String) {
   mutate_runtime(store.directory, runtime_filename(key), None, None)
+}
+
+pub fn compare_delete_runtime(
+  store: Store,
+  key: String,
+  previous: String,
+) -> Result(Nil, String) {
+  mutate_runtime(store.directory, runtime_filename(key), Some(previous), None)
 }
 
 fn runtime_filename(key: String) -> String {
@@ -155,4 +181,17 @@ fn mutate_runtime(
   filename: String,
   expected: Option(String),
   contents: Option(String),
+) -> Result(Nil, String)
+
+@external(erlang, "mimic_provider_runtime_ffi", "read_runtime_slot")
+fn secure_runtime_slot(
+  directory: String,
+  filename: String,
+) -> Result(Option(String), String)
+
+@external(erlang, "mimic_provider_runtime_ffi", "create_runtime")
+fn create_runtime_if_absent(
+  directory: String,
+  filename: String,
+  contents: String,
 ) -> Result(Nil, String)

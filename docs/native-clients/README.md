@@ -90,16 +90,21 @@ Limits: 2 CPUs, 2 GiB memory, 256 PIDs, 128 MiB `/work`, 64 MiB `/tmp`, no core
 dumps; child CPU 60 seconds, file output 8 MiB, 256 file descriptors; normal
 client wall deadline 45 seconds, container deadline 120 seconds. Processes are
 spawned with argument vectors, allowlisted environment and a new process group.
-Every path kills the group; the outer driver forcibly removes the named
-container, including on timeout. A removal failure is blocking, not success.
+Normal exception/timeout paths attempt process-group cleanup and forcibly remove
+the named container. A removal failure is blocking, not success. This is **not**
+proof of cleanup after driver SIGTERM/SIGKILL or parent death: an independent
+daemon/container lifetime watchdog and parent-death/timeout fault tests remain
+unimplemented/unperformed prerequisites before native-execution qualification.
 
 Codex's inner sandbox is disabled **only inside this mandatory outer fence**.
 This is needed to avoid treating a nested-kernel-sandbox setup issue as gateway
 compatibility evidence. Never copy that argv to a host shell.
 
-The deterministic tool actions are only Claude `Read` and Codex `exec_command`
+The draft deterministic tool actions are only Claude `Read` and Codex `exec_command`
 with the fixed command `cat /work/project/canary.txt`. No prompt/user string
-becomes a shell command. Synthetic secrets are recognizable constants; reports
+becomes a shell command. These workflows are now blocked before Docker or client
+spawn because the evidence does not yet establish exact call/result identity.
+Synthetic secrets are recognizable constants; reports
 contain authentication booleans, never credential values or raw message bodies.
 
 ## Workflow status and exact meaning
@@ -107,9 +112,9 @@ contain authentication booleans, never credential values or raw message bodies.
 | Workflow | Implemented assertion | Current result |
 |---|---|---|
 | `sse` | Native exit 0, native output marker, actual gateway-to-upstream stream/auth observations; SSE frames split across byte chunks | blocked: Docker unavailable |
-| `tool` | Native tool execution and canary-bearing tool result observed in a subsequent upstream request, followed by native output/exit | blocked |
-| `continuation` | Separate native process resumes stored conversation, emits output, and sends a larger history through MIMIC | blocked |
-| `cancel` | Interrupt after a native response event, then require nonzero native exit and upstream disconnect; no rendered-text or latency claim | blocked |
+| `tool` | Draft canary check lacks exact call ID and success/error binding | nonqualifiable; blocked before Docker/client |
+| `continuation` | Draft aggregate history check lacks per-phase request/session binding | nonqualifiable; blocked before Docker/client |
+| `cancel` | Draft event/disconnect check lacks interrupted-request and retry-order binding | nonqualifiable; blocked before Docker/client |
 | Long-duration SSE / WS | No adapter yet; short fragmented SSE is **not** long-stream or WS qualification | not_run |
 | Native login/device/PKCE | No local-issuer contract established for these exact client versions | not_run |
 | Native OAuth refresh/restart | API-key client fixture does not exercise native OAuth. Gateway synthetic grant provisioning is not native login | not_run |
@@ -123,13 +128,15 @@ expose unsupported flags, model/tool schema drift, missing runtime dependencies
 or gateway failures. Those remain failures. Do not loosen assertions or label
 the whole matrix unsupported to obtain a green result.
 
-Normal `sse` checks fragmented SSE acceptance and final output, not incremental
-UI timing. Cancellation additionally waits for Claude's partial `stream_event`
-or Codex's agent-message `item.started`/`item.updated`. If this Codex version
-only emits completed messages in JSON mode, cancellation fails with
-`native_stream_event_not_observed`; upstream readiness alone is not enough.
-An empty-text Codex `item.started` qualifies only as native event evidence,
-not rendered partial text, first-token latency or incremental delivery timing.
+Normal `sse` checks short fragmented SSE acceptance and final output, not
+incremental UI timing, rendered partial text, latency or long streaming.
+Tool/continuation/cancel remain in the eight-row inventory, not skipped or removed
+from the denominator. Both the outer runner and the inner harness block them;
+the parent rejects even fully populated `passed` reports for them. They require
+reviewed semantic request/call/phase bindings before admission can be enabled.
+An empty-text Codex `item.started` is only a native event, never proof of rendered
+partial text or first-token latency; global upstream disconnect is not proof of
+which client request was cancelled.
 
 ## Evidence interface
 
@@ -151,6 +158,30 @@ Report envelope: `schema = "mimic.native-clients/v1"`.
   a local pass. CPA lab may attach the report as distinct evidence, not relabel
   it as a CPA differential.
 
+Child reports use `schema = "mimic.native-client-workflow/v1"`. The parent validates
+the complete report **before accepting or copying claimed identity**:
+
+- Exact requested client, workflow and fresh per-invocation `request_id`.
+- Exact pinned client package/version/registry integrity/archive digest and
+  executable digest. The child hashes the executable it invokes, rather than
+  echoing an expected digest passed on the command line.
+- Independently calculated source hashes for the harness, fixture, validator,
+  lockfile, driver and Dockerfile; measured copied-shipment digest. Acquisition
+  receipts must match the pinned artifact digests and current source bytes.
+- Required fields and strict scalar/list types, bounded report size/counts,
+  no unknown fields, duplicate JSON keys, nonfinite numbers or mismatched exits.
+- For short SSE only: one actual client exit `0`, one successful parsed native
+  output check, the output marker, and nonempty valid model/path/stream/auth
+  observations. Empty exits/observations or `{"status":"passed"}` cannot pass.
+- Blocked reports cannot claim any client execution. Failed/blocked reports
+  retain that status; malformed/unbound reports become `invalid_container_report`.
+
+This is evidence admission from a trusted contained harness, not cryptographic
+remote attestation against a malicious Docker daemon. Canonical positive reports
+in unit tests are explicitly synthetic contract fixtures, never runtime evidence.
+Changing the validator/source/lock invalidates any earlier acquisition receipt;
+the image must be reacquired separately before a future authorized local run.
+
 The integration owner should wire commands/CI separately. A generic pass of the
 harness tests proves safety/fixture mechanics only; it does not qualify a
 native client. Do not make blocked native prerequisites an implicit CI pass.
@@ -163,13 +194,14 @@ native client. Do not make blocked native prerequisites an implicit CI pass.
 - `gleam test` with `mise exec gleam@1.18.1`: **522 passed**, no failures.
   An initial 120-second attempt timed out; the later 360-second bound completed.
 - `gleam export erlang-shipment`: succeeded.
-- Native harness unit tests: **21 passed** in the final expanded suite,
+- Native harness unit tests: **31 passed** after fail-closed admission fixes,
   recorded in `RESULTS.v1.json`.
 - `gleam format --check`: fails on preexisting
   `vendor/mist/src/mist/internal/http2/frame.gleam`; no unrelated formatting edits.
 - Official Claude/Codex artifact downloads and integrity checks succeeded.
-- Offline runner: **blocked**, `linux_docker_daemon_unavailable`.
-- Direct host harness invocation: **blocked**, `container_required`.
+- Historical pre-admission-fix offline attempt: all eight **blocked**,
+  `linux_docker_daemon_unavailable`. No Docker/client rerun for the admission fix.
+- Historical direct host harness invocation: **blocked**, `container_required`.
 - Live preflight: **not_run**, zero requests and no credentials read.
 - Runtime Docker image build, all eight native workflow executions, source and
   shipment native qualification, long streams, WS, native auth flows, CPA

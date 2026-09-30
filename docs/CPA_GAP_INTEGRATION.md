@@ -152,12 +152,12 @@ Overlays must not be mistaken for validated assembled application trees.
 
 | Slot | State | Approved immutable manifest |
 | --- | --- | --- |
-| Shared protocol/runtime | Snapshot 1 applied; S4 source-only assembly in progress, not merged | `fd2d703249cc22b5360f7542a955b3a45a287f61606cc7e66267f076f564a0dd` |
-| Claude policy | Frozen v1 source-only assembly in progress, not merged | none |
+| Shared protocol/runtime | S4 imported; parent stable gate passed; additive enrollment S5 import pending | `420cb193f1275ffdad89cf6d61fae9cbbae03b8cdeb677a6bf08c6d98338943f` |
+| Claude policy | All 15 v1 files imported; enrollment CAS follow-up pending | `c42c4004b65511b73254080f24406896295ea0d0865ae6b7ec326046159f96f3` |
 | Codex HTTP/lite | S4-based snapshot 2 verified/staged; opt-in decision pending | none |
-| Kimi | Frozen v1 assembly in progress; root native/generic/Chat/Messages wiring drafted, not verified | none |
-| xAI | Frozen v2 staged; selected adapters/OAuth/bindings not wired yet | none |
-| Devin | Frozen snapshot 1 verified/staged; combined import and root workflows pending | none |
+| Kimi | v1 plus wire-v2 imported; native/generic/Chat/Responses/buffered Messages CLI + shipment passed | see wire-v2 below |
+| xAI | All 19 v2 files imported; selected native adapters/OAuth/bindings not wired yet | `7391b1175a133abcfcdcd9068281b88bc2b8582231119acf9c9f5eada9c477e7` |
+| Devin | Partial only: six changed files, 10/32 owner paths match; remaining import pending | none |
 | Differential lab | v2 staged but rejected pending containment/default-discovery fixes; CPA startup blocked | none |
 | Native clients | Source + follow-up imported; root unit gate 21/21; native execution blocked | `docs/source-manifests/native-qa-wave-v2.sha256` |
 | Integration I1 | Base and local gate independently measured | see below |
@@ -180,6 +180,7 @@ Owner test reports remain labeled attestations, not local execution logs.
 | Shared-core S4 | 17 | `f318501aaaa1cbf5a8c477097b871387b6a85f30a9692c2f9cdda1dc524bb5bc` | `420cb193f1275ffdad89cf6d61fae9cbbae03b8cdeb677a6bf08c6d98338943f` |
 | Codex HTTP snapshot 2 | 16 | `332278d8bf6384d639f13929d081c18709c66799d86601f70135f160ced1a21a` | `97d47444e3f1743261330bbd56da115345038a4421334478410c310574b88588` |
 | Claude policy v1 | 15 | `f70ba1c673b52c8928cd8d4e6589ad3b96c0b4f594a109cb679f0718e22a723d` | `c42c4004b65511b73254080f24406896295ea0d0865ae6b7ec326046159f96f3` |
+| Kimi wire-v2 follow-up | 4 | `f7aee059133ffbd54d1a439e68976a47db01e9c17e46831c42d10a234251c1ae` | `4fbe48ca5d23160188c3bf1385e7649b3733c91d6afb117ee04b65a637e1dc95` |
 | Native QA v1 | 14 | `124421eaf3979cf5244476dcc3dba979b0f93b4be9a7cae77b2875c97d3d670b` | `ce9aa030f96d3594b153a48649af9f9b8ae67a038f2e99fcde8f65bb976c6788` |
 | CPA differential v1 | 11 | `d0b4f60ec61e5cadd9fac7c86c3dc686430dad100783a0ecbab629609cda0c3f` | `4c74701394d91c189615d43874a58e75d27fd0817be4fc1f1a8efa4d25313f09` |
 | CPA differential v2 (blocked) | 17 | `bdc440144f89fe319b931a54fa2b40172792357694c72e4cce8071108aa6aa43` | `6222e70903658f358bfd99b88597fddbc0e1362179045a18b0043916b4bbe285` |
@@ -243,7 +244,7 @@ used a conventional timeout code; it is superseded by `c42c...` above. Source
 bytes are identical. Owner reports 536 tests and focused scenarios passed;
 there is no owner final whole-script/shipment/CI claim.
 
-#### Source-only assembly now in progress
+#### Source-only assembly and accepted partial scope
 
 Internal integration workers are mechanically applying exact approved source,
 not implementing new provider behavior or creating new feature owners:
@@ -261,16 +262,85 @@ snapshot 2 above is the current target, after completing S4/Kimi first.
 Each batch must match all owner hashes after literal `apply_patch` import,
 then compile/test. No terminal `patch`, broad source copying or modifications
 to frozen owner bytes are authorized. Parent retains gateway/root ownership.
-These isolated imports are not yet accepted/merged into the root working tree.
+S4 and all 21 Kimi v1 destinations were independently checked in the parent
+against their 38 original owner hashes. The Kimi wire-v2 follow-up then replaced
+only its declared test expectations and added an actually observed v2 fixture;
+the original v1 fixture remains unchanged. All 15 Claude policy and 19 xAI
+destinations also matched their approved manifests.
+
 Root Kimi Chat SSE, buffered Messages, requested-model restoration and expanded
-actual-CLI tests are drafted, awaiting these inputs and an assembled gate.
+actual-CLI/shipment tests have passed the stable gate below.
 Distinct `openai-compatible-kimi` API-key/buffered-Chat routing and config are
-also drafted. Generic paths are API prefixes (default `/v1`), not native coding
+included. Generic paths are API prefixes (default `/v1`), not native coding
 prefixes. The generic path never applies native model/thinking/device policy.
 CLI tests cover native/generic coexistence in either account order, a missing
 first-account credential, exact generic request preservation, separate
 credentials, restarts without reseeding and unsupported auth/route/stream/state
-rejection. Only formatting/Python syntax has been checked at this stage.
+rejection. Generic streaming, Kimi Messages streaming, compact and continuation
+remain explicitly rejected.
+
+The Devin importer returned only six changed exact-owner files:
+`auth.gleam`, `continuation.gleam`, `models.gleam`, `status.gleam`, `tokens.gleam`
+and `test/devin_status_test.gleam`. Four pre-existing files also match the
+snapshot, giving 10/32. This is not Devin snapshot acceptance. It did not import
+the expanded bridge/request/response, 12-scenario runner or fresh-VM persistence
+scenario; its inherited six scenarios and four direct status tests are not
+evidence for those missing parts.
+
+#### Stable parent gate and preserved failures
+
+- Parent `gleam test` initially passed 576 after exact S4/Kimi import.
+- `s4-kimi-http-cli-001.log`: expanded root HTTP CLI passed, SHA-256
+  `274d978bdd8fd8d857d06b88929f4ce25b4c9af1c67eebe1f11995a3a0293887`.
+- `s4-kimi-native-full-001.log`: failed the owner wire-v1 test, which still
+  expected upstream model names downstream. SHA-256
+  `30fa83f3b5829d3bb1d811e25c364c9f1f18f448853bea9c13ba2d7b15733e80`.
+  The owner reproduced it and generated wire-v2 from real synthetic loopback
+  observations, retaining the immutable v1 fixture.
+- `s4-kimi-native-full-002.log`: script exited 0, but the before/after source
+  guard detected all 19 xAI files arriving during execution and rejected the
+  overall attempt with exit 2. This mixed-source run is **not** a clean gate.
+  Log SHA-256 `928efb39a804a4000ae7eeceed264155bd250665ba7b1afdf0c5f20bf831cea4`.
+- `s4-kimi-native-full-003.log`: script and source guard both exited 0,
+  **602 Gleam tests**, 10 parity Python, 13 release-tool Python, 21 native-QA
+  unit contracts and one Kimi wire test exercising three CLI modes. All source
+  and shipment workflows passed. **442 source inputs were unchanged** across
+  the run. Log SHA-256
+  `ff3e45cbd4f21ba7476c4898e88b812cd09f11836b69d9ffc86508fde3a0e161`.
+
+These logs and the source-before/source-after/result JSON receipts remain in
+`build/integration/cpa-gap/`. This is a clean local gate for that checkpoint,
+not completion of all nine threads. Subsequent enrollment changes below still
+require their own assembled validation.
+
+#### Enrollment race: reproduced release blocker, fix in progress
+
+Inspection found async Kimi and Claude enrollment ended in unconditional
+`runtime_store.save`, allowing a later callback to overwrite intervening admin
+replacement/deletion. Claude owner independently reproduced 12 cases.
+The parent added actual Kimi root-CLI races:
+
+- First fixture attempt stopped on deleting a still-absent slot
+  (`kimi-enrollment-red-001.log`, SHA-256
+  `ad447449f580aeb743c73b79518c93c3fbf88103e792e1abce92d885b9e60682`).
+- The corrected test records whether admin mutation was accepted rather than
+  hiding that missing reservation. It reproduced clobber/resurrection in all
+  six cases; five admin mutations succeeded, and first-absent deletion could
+  not succeed without a pending marker. `kimi-enrollment-red-002.log`, exit 1,
+  SHA-256 `b2fc35fd9f7203a33503c42a5686f052a90c13a668aa411c3f74e75837589506`.
+
+Approved shared S5 uses an opaque exact-slot enrollment ticket, a nonce-only
+same-slot first-enrollment marker, exact CAS commit and durable cancellation.
+Existing cancellation preserves material/gate but bumps the local revision,
+invalidating generation-bound receipts/sessions; it does not revoke upstream
+tokens. A crash marker requires explicit admin deletion, never TTL takeover.
+
+S5 archive `a663d946002aa8eeed255f8df4cde6c49faacf1b304b5ed370eef48cf2f04f5f`
+and Claude enrollment follow-up
+`42846c04ca4464fb9bdd38e6c41743051c32ac7131d288d542c2bd1662a27361`
+are queued for exact import. The parent Kimi call-site patch and source/shipment
+race-gate wiring are drafted against those APIs, not yet validated. No fallback
+to unconditional save or automatic replay is permitted.
 
 Native QA independently passed all 21 contract tests with guarded synthetic
 loopback traffic, zero skips, zero subprocess launches and no external traffic.

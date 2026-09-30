@@ -1,5 +1,10 @@
 # Codex / ChatGPT provider adapter
 
+For the subsequent HTTP continuation/Responses-lite slice, authoritative
+revision-bound cache hooks, and its explicit native sparse-terminal gap, see
+[`codex-http-continuation.md`](codex-http-continuation.md). The snapshot counts
+and integration notes below describe the earlier adapter work.
+
 ## Provenance and ownership
 
 - Verified assembled MIMIC base:

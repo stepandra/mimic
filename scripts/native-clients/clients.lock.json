@@ -9,6 +9,8 @@
       "source": "https://github.com/anthropics/claude-code",
       "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.284.tgz",
       "integrity": "sha512-hjjPgN4u8DvnzZqWDYnU5xxQkykuUrkUoVeeutVLXjrhx4qeRPmwgZ69BFAHmV42FBRdiRwbLbiDE9nkQdAE8g==",
+      "archive_sha256": "642690c3afaa22029c17341e520d8c35ca85857fce6dcc9ecd90ef5e3c7f1027",
+      "executable_sha256": "5cd90aabd83f8a15136c35aa37bb1d92b348993573316643dc3fe4e04afbf88f",
       "member": "package/claude"
     },
     "codex": {
@@ -18,6 +20,8 @@
       "source": "https://github.com/openai/codex",
       "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.158.0-linux-x64.tgz",
       "integrity": "sha512-mY12GZPM8TuOWVGxCyNV2NSA8t1uIupm9Nhu9VeQVEvvxBKN08U8bLH+vn7oISUHZPC8bwhROIbo/ZUxqV6XMg==",
+      "archive_sha256": "3fe84106aaf2fbfc13299068510d34b3d0157eeb9af4b37be8cf5416f485a6bb",
+      "executable_sha256": "167c0148a849d2444f1b5a7fb5f8bb2de1de5ae13a2a504b833fc765980f5cd9",
       "member": "package/vendor/x86_64-unknown-linux-musl/bin/codex"
     }
   },

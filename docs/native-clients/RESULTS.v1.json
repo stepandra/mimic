@@ -12,6 +12,14 @@
     "--shipment", "build/erlang-shipment", "--workflow", "all"
   ],
   "attempted_command_exit": 2,
+  "attempt_note": "Historical pre-admission-fix attempt; no Docker/client rerun for this fix.",
+  "admission_policy": {
+    "qualifiable_workflows": ["sse"],
+    "nonqualifiable_workflows": ["tool", "continuation", "cancel"],
+    "nonqualifiable_status": "blocked",
+    "inventory_denominator": 8,
+    "child_schema": "mimic.native-client-workflow/v1"
+  },
   "workflows": [
     {"client": "claude", "workflow": "sse", "status": "blocked"},
     {"client": "claude", "workflow": "tool", "status": "blocked"},
@@ -25,7 +33,7 @@
   "checks": {
     "gleam_1_18_1_tests": {"status": "passed", "tests": 522},
     "gleam_shipment_export": {"status": "passed"},
-    "qa_contract_tests": {"status": "passed", "tests": 21},
+    "qa_contract_tests": {"status": "passed", "tests": 31},
     "artifact_integrity": {"status": "passed", "clients": ["claude", "codex"]},
     "format_check": {
       "status": "failed",
@@ -38,6 +46,10 @@
   "unperformed_gates": [
     "runtime_image_build",
     "contained_native_source_and_shipment_execution",
+    "tool_call_result_identity_and_error_binding",
+    "continuation_phase_request_session_binding",
+    "cancellation_interrupted_request_retry_binding",
+    "daemon_lifetime_watchdog_and_parent_death_fault_tests",
     "native_login_device_pkce",
     "native_refresh_restart",
     "long_sse_and_websocket",

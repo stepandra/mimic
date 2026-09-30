@@ -7,7 +7,7 @@ COPY --from=python /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/
 ENV LD_LIBRARY_PATH=/usr/local/lib
 COPY claude /clients/claude
 COPY codex-tree /clients/codex/
-COPY harness.py fixtures.py clients.lock.json /qa/
+COPY harness.py fixtures.py evidence.py qa.py clients.lock.json Dockerfile /qa/
 RUN chmod -R a+rX /qa /clients && chmod 0555 /clients/claude \
     && python3 -c "import ssl, socket, resource" && erl -noshell -eval 'halt().'
 USER 10001:10001

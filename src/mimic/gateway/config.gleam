@@ -29,6 +29,7 @@ pub type Config {
     codex_catalog: Option(models.Catalog),
     codex_user_agent: String,
     codex_websocket: Bool,
+    codex_http_continuation: Bool,
   )
 }
 
@@ -80,6 +81,9 @@ pub fn decode(source: String) -> Result(Config, String) {
   use websocket <- result.try(
     ir.optional_bool(value, "codex_websocket", False) |> safe,
   )
+  use http_continuation <- result.try(
+    ir.optional_bool(value, "codex_http_continuation", False) |> safe,
+  )
   use _ <- result.try(
     case
       version == 1
@@ -104,7 +108,7 @@ pub fn decode(source: String) -> Result(Config, String) {
       })
       && safe_header(agent)
       && {
-        !websocket
+        !{ websocket || http_continuation }
         || {
           catalog != None
           && list.any(accounts, fn(account) { account.provider == "codex" })
@@ -155,7 +159,16 @@ pub fn decode(source: String) -> Result(Config, String) {
       }
     }),
   )
-  Ok(Config(version, state_dir, port, accounts, catalog, agent, websocket))
+  Ok(Config(
+    version,
+    state_dir,
+    port,
+    accounts,
+    catalog,
+    agent,
+    websocket,
+    http_continuation,
+  ))
 }
 
 fn account(value: ir.Value) -> Result(Account, String) {
@@ -238,6 +251,12 @@ fn account(value: ir.Value) -> Result(Account, String) {
       False -> Error("invalid gateway account")
     },
   )
+  // Admit one canonical authority for configuration, runtime scope and adapter
+  // equality. Only the already-validated empty/root path may be normalized.
+  let origin = case parsed.path {
+    "/" -> string.drop_end(origin, 1)
+    _ -> origin
+  }
   use _ <- result.try(
     fleet.validate(fleet.Profile(
       credential.key(provider, auth_mode, id),

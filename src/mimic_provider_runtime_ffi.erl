@@ -1,5 +1,6 @@
 -module(mimic_provider_runtime_ffi).
--export([claim_store/1, release_store/1, protect/1, mutate_runtime/4]).
+-export([claim_store/1, release_store/1, protect/1, mutate_runtime/4,
+         read_runtime_slot/2, create_runtime/3]).
 -include_lib("kernel/include/file.hrl").
 
 %% Atomic local-filesystem ownership primitive. No PID guessing or stale-lock
@@ -63,6 +64,27 @@ release_owned(Lock, File, Nonce) ->
 protect(Fun) ->
     try {ok, Fun()} catch _:_ -> {error, nil} end.
 
+%% Distinguish genuine absence from every unsafe/read failure. In particular a
+%% dangling symlink is present, not ENOENT. No contents/path enter errors.
+read_runtime_slot(Directory, Name) ->
+    case mimic_auth_ffi:validate_directory(Directory) of
+        {ok, nil} ->
+            case file:read_link_info(filename:join(Directory, Name)) of
+                {error, enoent} -> {ok, none};
+                {ok, _} ->
+                    case mimic_auth_ffi:secure_read(Directory, Name) of
+                        {ok, Raw} -> {ok, {some, Raw}};
+                        _ -> {error, <<"Runtime credential slot unavailable">>}
+                    end;
+                _ -> {error, <<"Runtime credential slot unavailable">>}
+            end;
+        _ -> {error, <<"Runtime credential slot unavailable">>}
+    end.
+
+%% Private expectation tag keeps the legacy Option(String) ABI unchanged.
+create_runtime(Directory, Name, Contents) ->
+    mutate_runtime(Directory, Name, absent, {some, Contents}).
+
 %% Atomic compare-and-replace filesystem primitive. Every supported runtime
 %% write/delete takes this same per-record mutex, including management writes.
 %% Stale mutation guards fail closed after a VM crash; no stale lock takeover.
@@ -99,6 +121,11 @@ mutate_owned(Directory, Name, Expected, Contents) ->
                         _ = file:change_mode(Lock, 8#700),
                         Current = case Expected of
                             none -> match;
+                            absent ->
+                                case read_runtime_slot(Directory, Name) of
+                                    {ok, none} -> match;
+                                    _ -> changed
+                                end;
                             {some, Value} ->
                                 case mimic_auth_ffi:secure_read(Directory, Name) of
                                     {ok, Value} -> match;
