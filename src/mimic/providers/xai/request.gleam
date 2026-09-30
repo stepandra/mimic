@@ -149,6 +149,19 @@ fn prepare_choice(body, refs) {
           use choice <- result.try(tools.wire_call(choice, refs))
           Ok(tools.set(body, "tool_choice", choice))
         }
+        Ok("web_search") | Ok("x_search") -> {
+          let declared = case ir.field(body, "tools") {
+            Some(ir.Array(declarations)) ->
+              list.any(declarations, fn(tool) {
+                ir.field(tool, "type") == ir.field(choice, "type")
+              })
+            _ -> False
+          }
+          case declared {
+            True -> Ok(body)
+            False -> Error("xAI choice references an undeclared server tool")
+          }
+        }
         _ -> Error("Unsupported xAI structured tool choice")
       }
     }

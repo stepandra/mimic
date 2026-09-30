@@ -6,10 +6,12 @@ import gleam/result
 import gleam/string
 import gleam/uri
 import mimic/auth
+import mimic/auth/runtime as credentials
 import mimic/dialect/responses
 import mimic/ir
 import mimic/providers/contracts as runtime
 import mimic/providers/xai/endpoint
+import mimic/providers/xai/json_guard
 import mimic/providers/xai/oauth
 import mimic/providers/xai/request as xai_request
 import mimic/providers/xai/tools
@@ -26,7 +28,13 @@ pub fn prepare(
   context: runtime.Context,
   req: runtime.Request,
 ) -> Result(types.Capture, runtime.Failure) {
-  prepare_plan(config, context, req) |> result.map(fn(plan) { plan.capture })
+  use plan <- result.try(prepare_plan(config, context, req))
+  // Legacy raw transport callers cannot restore client names. The native
+  // adapter uses prepare_plan and keeps refs on its selected response handle.
+  case plan.tool_refs {
+    [] -> Ok(plan.capture)
+    _ -> Error(runtime.Failure(runtime.Unsupported, runtime.NotSent, None))
+  }
 }
 
 pub fn prepare_plan(
@@ -60,7 +68,9 @@ pub fn prepare_plan(
   use _ <- result.try(
     case
       list.any(req.required, fn(capability) {
-        capability != runtime.Buffer && capability != runtime.Stream
+        capability != runtime.Buffer
+        && capability != runtime.Stream
+        && capability != runtime.Tools
       })
     {
       True -> Error(runtime.Failure(runtime.Unsupported, runtime.NotSent, None))
@@ -82,6 +92,7 @@ pub fn prepare_plan(
       valid_token(data.credential.access_token)
     _, _ -> invalid()
   })
+  use _ <- result.try(json_guard.parse(req.body) |> sanitized)
   use decoded <- result.try(case operation {
     endpoint.Compact -> responses.decode_compact_request(req.body) |> sanitized
     _ -> responses.decode_request(req.body) |> sanitized
@@ -96,13 +107,33 @@ pub fn prepare_plan(
       False -> invalid()
     },
   )
-  // Tool-name folding has no response-scoped restoration hook in runtime v4.
-  // Fail closed rather than returning an alias or pretending native tools work.
+  // HTTP state references still require a trusted receipt; WS owns its receipt
+  // through the shared connection-scoped Session. Never silently drop state.
+  use _ <- result.try(responses.pair_input(decoded, []) |> sanitized)
+  use _ <- result.try(case operation {
+    endpoint.Compact ->
+      case
+        list.any(
+          [
+            "tools",
+            "tool_choice",
+            "max_output_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+          ],
+          fn(key) { ir.field(decoded.document, key) != None },
+        )
+      {
+        True ->
+          Error(runtime.Failure(runtime.Unsupported, runtime.NotSent, None))
+        False -> Ok(Nil)
+      }
+    _ -> Ok(Nil)
+  })
   use _ <- result.try(
     case
-      ir.field(decoded.document, "tools") == None
-      && ir.field(decoded.document, "tool_choice") == None
-      && ir.field(decoded.document, "prompt_cache_retention") == None
+      ir.field(decoded.document, "prompt_cache_retention") == None
       && ir.field(decoded.document, "safety_identifier") == None
       && ir.field(decoded.document, "stream_options") == None
       && ir.field(decoded.document, "stop") == None
@@ -227,8 +258,17 @@ pub fn refresher(config: oauth.Config, send: oauth.Send) -> runtime.Refresh {
   })
 }
 
+/// Gateway registration uses the one runtime refresh worker and durable fence.
+/// API keys remain StaticKey; enrollment persists oauth_material before activation.
+pub fn oauth_policy(
+  config: oauth.Config,
+  send: oauth.Send,
+) -> credentials.Policy {
+  credentials.Refreshable(refresher(config, send))
+}
+
 /// A bare 429 does not prove the request was not executed. Observe cooldown
-/// but prohibit automatic replay; only explicit 401 auth rejection is safe.
+/// but prohibit automatic replay. A bare 401 is not affirmative execution proof.
 pub fn rejection(
   status: Int,
   _headers: List(types.Header),
@@ -238,7 +278,7 @@ pub fn rejection(
     401 ->
       Some(runtime.Failure(
         runtime.CredentialUnavailable,
-        runtime.Rejected,
+        runtime.Uncertain,
         None,
       ))
     _ -> None
@@ -249,7 +289,7 @@ pub fn cli(args: List(String)) -> Result(String, String) {
   case args {
     [] | ["help"] ->
       Ok(
-        "xai: explicit API-key or Grok Build device OAuth; endpoint plans and Responses provider transforms; operator/runtime registration required; no browser-account, media or native WS transport",
+        "xai: explicit API-key or Grok Build device OAuth; native HTTP/SSE and opt-in WS adapters; operator/runtime registration required; no browser-account or media support",
       )
     _ -> Error("Unsupported xAI CLI command")
   }

@@ -14,6 +14,7 @@ import mimic/auth
 import mimic/auth/runtime as credential
 import mimic/auth/runtime_store
 import mimic/auth/storage
+import mimic/dialect/openai
 import mimic/dialect/responses
 import mimic/gateway/config.{type Config}
 import mimic/gateway/enrollment
@@ -21,6 +22,7 @@ import mimic/gateway/refresh
 import mimic/gateway/websocket
 import mimic/ingress/keys
 import mimic/ir
+import mimic/protocol/chat/stream as chat_stream
 import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream as responses_stream
 import mimic/providers/claude/adapter as claude_adapter
@@ -39,6 +41,7 @@ import mimic/providers/kimi/adapter as kimi
 import mimic/providers/kimi/models as kimi_models
 import mimic/providers/kimi/oauth as kimi_oauth
 import mimic/providers/kimi/request as kimi_request
+import mimic/providers/kimi_compat/request as kimi_compat
 import mimic/providers/registry
 import mimic/providers/runtime
 import mimic/providers/transport
@@ -169,7 +172,11 @@ pub fn cli(args: List(String)) -> Result(String, String) {
           )
           |> sanitized
         }
-        "claude", "api_key" | "xai", "api_key" | "kimi", "api_key" ->
+        "claude", "api_key"
+        | "xai", "api_key"
+        | "kimi", "api_key"
+        | "openai-compatible-kimi", "api_key"
+        ->
           ir.string_field(body, "api_key")
           |> sanitized
           |> result.try(fn(secret) {
@@ -372,6 +379,8 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
       #("devin", _) -> list.first(devin.models()) |> sanitized
       #("xai", model) -> xai_models.registration(model) |> sanitized
       #("kimi", model) -> kimi_models.registration(model) |> sanitized
+      #("openai-compatible-kimi", model) ->
+        kimi_compat.registration(model) |> sanitized
       _ -> Error("unsupported provider")
     }
   })
@@ -438,7 +447,7 @@ fn route(
     }
     Post, "/v1/messages", None ->
       with_body(req, fn(body) {
-        dispatch(req, config, engine, identity, body, "claude", "messages")
+        dispatch(req, config, engine, identity, body, "messages", "messages")
       })
     Post, "/v1/messages/count_tokens", None ->
       with_body(req, fn(body) {
@@ -525,8 +534,16 @@ fn dispatch(
               {
                 a.provider == provider
                 || {
+                  provider == "messages"
+                  && { a.provider == "claude" || a.provider == "kimi" }
+                }
+                || {
                   provider == "chat"
-                  && { a.provider == "kimi" || a.provider == "devin" }
+                  && {
+                    a.provider == "kimi"
+                    || a.provider == "devin"
+                    || a.provider == "openai-compatible-kimi"
+                  }
                 }
                 || {
                   provider == "responses"
@@ -561,7 +578,9 @@ fn dispatch(
                   case provider {
                     "claude" -> "messages"
                     "devin" -> "openai-chat"
+                    "kimi" if operation == "messages" -> "anthropic"
                     "kimi" if operation == "chat/completions" -> "chat"
+                    "openai-compatible-kimi" -> "chat"
                     _ -> "responses"
                   },
                   operation,
@@ -579,8 +598,12 @@ fn dispatch(
                   serve_codex(req, config, engine, identity, request, stream)
                 "xai", "responses", _ | "xai", "responses/compact", False ->
                   serve_xai(req, engine, request, stream)
-                "kimi", "responses", _ | "kimi", "chat/completions", False ->
-                  serve_kimi(req, config, engine, request, stream)
+                "kimi", "responses", _
+                | "kimi", "chat/completions", _
+                | "kimi", "messages", False
+                -> serve_kimi(req, config, engine, request, stream)
+                "openai-compatible-kimi", "chat/completions", False ->
+                  serve_kimi_compat(config, engine, request)
                 "devin", "generate", False ->
                   case devin.execute(engine, None, request) {
                     Ok(body) -> reply(200, body, "application/json")
@@ -828,17 +851,7 @@ fn serve_kimi(
 ) -> Response(mist.ResponseData) {
   let adapter =
     kimi_request.http_at(
-      fn(context) {
-        configured_account(config, context.account)
-        |> result.map(fn(account) { account.base_path })
-        |> result.map_error(fn(_) {
-          contracts.Failure(
-            contracts.InvalidConfiguration,
-            contracts.NotSent,
-            None,
-          )
-        })
-      },
+      fn(context) { selected_base_path(config, context) },
       None,
     )
   case runtime.open(engine, adapter, request) {
@@ -853,14 +866,27 @@ fn serve_kimi(
       case streaming {
         True ->
           case responses_http.open_sse(opened.status, opened.headers) {
-            Ok(_) -> stream_native(req, opened, kimi.run)
+            Ok(_) ->
+              case request.operation {
+                "chat/completions" ->
+                  stream_encoded(req, opened, fn(response, emit) {
+                    kimi.run_chat_for(response, request, fn(event) {
+                      emit(chat_stream.encode_event(event))
+                    })
+                    |> result.map(fn(_) { Nil })
+                  })
+                _ ->
+                  stream_native(req, opened, fn(response, emit) {
+                    kimi.run_for(response, request, emit)
+                  })
+              }
             Error(_) -> {
               runtime.cancel(opened.stream)
               reject(502, "invalid upstream response")
             }
           }
         False ->
-          case kimi.collect(opened, request.operation) {
+          case kimi.collect_for(opened, request) {
             Error(_) -> reject(502, "invalid upstream response")
             Ok(result) ->
               case bit_array.to_string(result.body) {
@@ -872,6 +898,85 @@ fn serve_kimi(
   }
 }
 
+fn selected_base_path(
+  config: Config,
+  context: contracts.Context,
+) -> Result(String, contracts.Failure) {
+  configured_account(config, context.account)
+  |> result.map(fn(account) { account.base_path })
+  |> result.map_error(fn(_) {
+    contracts.Failure(contracts.InvalidConfiguration, contracts.NotSent, None)
+  })
+}
+
+/// Generic Kimi is a separate API-key/native-Chat provider. It must not pass
+/// through native Kimi model restoration, thinking policy or device identity.
+fn serve_kimi_compat(
+  config: Config,
+  engine: runtime.Runtime,
+  request: contracts.Request,
+) -> Response(mist.ResponseData) {
+  let adapter =
+    kimi_compat.http_at(
+      fn(context) { selected_base_path(config, context) },
+      None,
+    )
+  case runtime.execute(engine, adapter, request) {
+    Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, _))
+    | Error(contracts.Failure(
+        contracts.InvalidConfiguration,
+        contracts.NotSent,
+        _,
+      )) -> reject(422, "unsupported generic Kimi request")
+    Error(_) -> reject(503, "provider unavailable")
+    Ok(opened) -> {
+      let media =
+        list.filter(opened.headers, fn(h) {
+          string.lowercase(h.name) == "content-type"
+        })
+      let encoding =
+        list.filter(opened.headers, fn(h) {
+          string.lowercase(h.name) == "content-encoding"
+        })
+      let valid_media = case media {
+        [media] ->
+          case
+            string.split(media.value, ";")
+            |> list.map(fn(part) { string.lowercase(string.trim(part)) })
+          {
+            ["application/json"] | ["application/json", "charset=utf-8"] -> True
+            _ -> False
+          }
+        _ -> False
+      }
+      let valid_encoding = case encoding {
+        [] -> True
+        [encoding] ->
+          string.lowercase(string.trim(encoding.value)) == "identity"
+        _ -> False
+      }
+      case
+        valid_media
+        && valid_encoding
+        && opened.status >= 200
+        && opened.status < 300
+      {
+        False -> reject(502, "invalid upstream response")
+        True ->
+          case bit_array.to_string(opened.body) {
+            Error(_) -> reject(502, "invalid upstream response")
+            Ok(body) ->
+              case openai.decode_response(body) {
+                Ok(decoded) if decoded.model == request.model ->
+                  reply(opened.status, body, "application/json")
+                _ -> reject(502, "invalid upstream response")
+              }
+          }
+      }
+    }
+  }
+}
+
 fn stream_native(
   req: Request(mist.Connection),
   opened: runtime.Response,
@@ -879,6 +984,22 @@ fn stream_native(
     runtime.Response,
     fn(responses_stream.Event) -> Result(responses_http.Control, String),
   ) -> Result(responses_stream.Outcome, contracts.Failure),
+) -> Response(mist.ResponseData) {
+  stream_encoded(req, opened, fn(response, emit) {
+    run(response, fn(event) { emit(responses_stream.encode_event(event)) })
+    |> result.map(fn(_) { Nil })
+  })
+}
+
+/// One Mist ownership handoff for native SSE codecs. Provider runners retain
+/// byte framing, valid-prefix/error semantics and exactly-once cancellation.
+fn stream_encoded(
+  req: Request(mist.Connection),
+  opened: runtime.Response,
+  run: fn(
+    runtime.Response,
+    fn(String) -> Result(responses_http.Control, String),
+  ) -> Result(Nil, contracts.Failure),
 ) -> Response(mist.ResponseData) {
   mist.chunked(
     request: req,
@@ -899,13 +1020,8 @@ fn stream_native(
         False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
         True ->
           case
-            run(state.opened, fn(event) {
-              case
-                mist.send_chunk(
-                  connection,
-                  bit_array.from_string(responses_stream.encode_event(event)),
-                )
-              {
+            run(state.opened, fn(frame) {
+              case mist.send_chunk(connection, bit_array.from_string(frame)) {
                 Ok(_) -> Ok(responses_http.Continue)
                 Error(_) -> Error("downstream closed")
               }

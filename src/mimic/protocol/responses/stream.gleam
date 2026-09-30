@@ -6,6 +6,7 @@ import gleam/result
 import gleam/string
 import mimic/dialect/responses
 import mimic/ir
+import mimic/protocol/sse
 
 pub type Outcome {
   Completed
@@ -44,13 +45,7 @@ type Part {
 /// Bounded metadata, never accumulated generated content or terminal documents.
 pub opaque type Stream {
   Stream(
-    pending: BitArray,
-    data: List(String),
-    event_name: String,
-    frame_bytes: Int,
-    skip_lf: Bool,
-    cr_bytes: Int,
-    first_line: Bool,
+    framing: sse.Decoder,
     response_id: Option(String),
     sequence: Option(Int),
     items: Dict(Int, Item),
@@ -72,13 +67,7 @@ pub fn new_with_limits(
   max_parts: Int,
 ) -> Stream {
   Stream(
-    <<>>,
-    [],
-    "",
-    0,
-    False,
-    0,
-    True,
+    sse.new(max_frame_bytes),
     None,
     None,
     dict.new(),
@@ -95,158 +84,47 @@ pub fn feed(
   stream: Stream,
   chunk: BitArray,
 ) -> Result(#(Stream, List(Event)), String) {
-  use _ <- result.try(ensure(
-    bit_array.bit_size(chunk) % 8 == 0,
-    "Responses SSE input must be byte aligned",
-  ))
-  scan(stream, chunk, [])
+  let batch = feed_partial(stream, chunk)
+  use next <- result.try(batch.next)
+  Ok(#(next, batch.events))
 }
 
 /// Streaming callers should prefer this over atomic feed: TCP chunk boundaries
 /// must not decide whether a valid prefix is delivered before a later failure.
 pub fn feed_partial(stream: Stream, chunk: BitArray) -> Batch {
-  case bit_array.bit_size(chunk) % 8 == 0 {
-    False -> Batch([], Error("Responses SSE input must be byte aligned"))
-    True -> partial_lines(stream, chunk, [])
-  }
+  partial_frames(stream, chunk, [])
 }
 
-fn partial_lines(
+fn partial_frames(
   stream: Stream,
   chunk: BitArray,
   events: List(Event),
 ) -> Batch {
-  case chunk {
-    <<>> -> Batch(list.reverse(events), Ok(stream))
-    _ -> {
-      // One physical line can dispatch at most one event. Reuse the exact same
-      // parser and bounds rather than maintaining a second SSE interpretation.
-      let #(prefix, separator, rest) = split_line(chunk)
-      let line = case separator {
-        0 -> prefix
-        _ -> <<prefix:bits, separator>>
-      }
-      case feed(stream, line) {
-        Error(error) -> Batch(list.reverse(events), Error(error))
-        Ok(#(next, emitted)) ->
-          partial_lines(next, rest, list.append(list.reverse(emitted), events))
+  case sse.feed_one(stream.framing, chunk) {
+    Error(error) -> Batch(list.reverse(events), Error(error))
+    Ok(#(framing, frame, rest)) -> {
+      let stream = Stream(..stream, framing: framing)
+      case frame {
+        None -> Batch(list.reverse(events), Ok(stream))
+        Some(frame) ->
+          case dispatch(stream, frame) {
+            Error(error) -> Batch(list.reverse(events), Error(error))
+            Ok(#(next, event)) ->
+              partial_frames(next, rest, case event {
+                None -> events
+                Some(event) -> [event, ..events]
+              })
+          }
       }
     }
   }
 }
 
-fn scan(
+fn dispatch(
   stream: Stream,
-  chunk: BitArray,
-  events: List(Event),
-) -> Result(#(Stream, List(Event)), String) {
-  case chunk {
-    <<>> -> Ok(#(stream, list.reverse(events)))
-    <<10, rest:bits>> if stream.skip_lf -> {
-      use _ <- result.try(ensure(
-        stream.cr_bytes + 1 <= stream.max_frame_bytes,
-        "Responses SSE frame exceeds byte limit",
-      ))
-      let bytes = case stream.frame_bytes {
-        0 -> 0
-        count -> count + 1
-      }
-      scan(Stream(..stream, skip_lf: False, frame_bytes: bytes), rest, events)
-    }
-    _ -> {
-      let stream = Stream(..stream, skip_lf: False)
-      let #(prefix, separator, rest) = split_line(chunk)
-      let size = bit_array.byte_size(prefix)
-      use _ <- result.try(ensure(
-        stream.frame_bytes + size <= stream.max_frame_bytes,
-        "Responses SSE frame exceeds byte limit",
-      ))
-      let pending = <<stream.pending:bits, copy_bytes(prefix):bits>>
-      let stream = Stream(..stream, frame_bytes: stream.frame_bytes + size)
-      case separator {
-        0 -> Ok(#(Stream(..stream, pending: pending), list.reverse(events)))
-        _ -> {
-          use line <- result.try(
-            bit_array.to_string(pending)
-            |> result.map_error(fn(_) { "invalid UTF-8 in Responses SSE" }),
-          )
-          let line = case stream.first_line {
-            True ->
-              case string.starts_with(line, "\u{FEFF}") {
-                True -> string.drop_start(line, 1)
-                False -> line
-              }
-            False -> line
-          }
-          let stream =
-            Stream(
-              ..stream,
-              pending: <<>>,
-              skip_lf: separator == 13,
-              cr_bytes: stream.frame_bytes + 1,
-              first_line: False,
-              frame_bytes: stream.frame_bytes + 1,
-            )
-          use pair <- result.try(line_received(stream, line))
-          let events = case pair.1 {
-            None -> events
-            Some(event) -> [event, ..events]
-          }
-          scan(pair.0, rest, events)
-        }
-      }
-    }
-  }
-}
-
-/// Primitive byte framing only; all SSE and protocol semantics remain Gleam.
-@external(erlang, "mimic_responses_bytes_ffi", "split_line")
-fn split_line(bytes: BitArray) -> #(BitArray, Int, BitArray)
-
-// A small unfinished frame must not retain an arbitrarily large input chunk.
-@external(erlang, "binary", "copy")
-fn copy_bytes(bytes: BitArray) -> BitArray
-
-fn line_received(
-  stream: Stream,
-  line: String,
+  frame: sse.Frame,
 ) -> Result(#(Stream, Option(Event)), String) {
-  use _ <- result.try(ensure(
-    stream.frame_bytes <= stream.max_frame_bytes,
-    "Responses SSE frame exceeds byte limit",
-  ))
-  case line {
-    "" -> dispatch(stream)
-    _ -> {
-      use _ <- result.try(ensure(
-        stream.frame_bytes <= stream.max_frame_bytes,
-        "Responses SSE frame exceeds byte limit",
-      ))
-      let #(field, value) = case string.split_once(line, ":") {
-        Ok(#(field, value)) -> #(
-          field,
-          string.drop_start(value, case string.starts_with(value, " ") {
-            True -> 1
-            False -> 0
-          }),
-        )
-        Error(_) -> #(line, "")
-      }
-      case field {
-        "data" -> Ok(#(Stream(..stream, data: [value, ..stream.data]), None))
-        "event" -> Ok(#(Stream(..stream, event_name: value), None))
-        // Comments, retry and id are transport metadata, not model output.
-        // This codec does not implement automatic SSE reconnection/replay.
-        _ -> Ok(#(stream, None))
-      }
-    }
-  }
-}
-
-fn dispatch(stream: Stream) -> Result(#(Stream, Option(Event)), String) {
-  let data = stream.data |> list.reverse |> string.join("\n")
-  let name = stream.event_name
-  let stream = Stream(..stream, data: [], event_name: "", frame_bytes: 0)
+  let sse.Frame(name, data) = frame
   case data {
     "" -> Ok(#(stream, None))
     "[DONE]" -> {
@@ -723,10 +601,10 @@ fn safe_event_name(name: String) -> Bool {
 }
 
 pub fn finish(stream: Stream) -> Result(Outcome, String) {
-  use _ <- result.try(ensure(
-    stream.pending == <<>> && stream.data == [] && stream.event_name == "",
-    "truncated Responses SSE frame",
-  ))
+  use _ <- result.try(
+    sse.finish(stream.framing)
+    |> result.replace_error("truncated Responses SSE frame"),
+  )
   case stream.outcome {
     None -> Error("Responses disconnected before protocol terminal")
     Some(outcome) -> Ok(outcome)
@@ -739,10 +617,7 @@ pub fn cancel(stream: Stream) -> Stream {
     None ->
       Stream(
         ..stream,
-        pending: <<>>,
-        data: [],
-        event_name: "",
-        frame_bytes: 0,
+        framing: sse.reset(stream.framing),
         items: dict.new(),
         outcome: Some(Cancelled),
       )

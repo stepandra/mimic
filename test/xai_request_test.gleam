@@ -57,13 +57,49 @@ pub fn collisions_and_unsupported_tools_fail_closed_test() {
     ),
   ])
   |> should.be_error
-  list.each(
-    ["image_generation", "web_search", "x_search", "tool_search", "custom"],
-    fn(kind) {
-      tools.prepare([ir.Object([#("type", ir.String(kind))])])
-      |> should.be_error
-    },
+  list.each(["image_generation", "tool_search", "custom"], fn(kind) {
+    tools.prepare([ir.Object([#("type", ir.String(kind))])])
+    |> should.be_error
+  })
+}
+
+pub fn native_server_tools_and_client_alias_remain_distinct_test() {
+  let server =
+    value("{\"type\":\"web_search\",\"allowed_domains\":[\"example.invalid\"]}")
+  let x_search =
+    value("{\"type\":\"x_search\",\"allowed_x_handles\":[\"synthetic\"]}")
+  let assert Ok(#(declared, refs)) =
+    tools.prepare([
+      server,
+      x_search,
+      value(
+        "{\"type\":\"function\",\"name\":\"web_search\",\"parameters\":{\"type\":\"object\"}}",
+      ),
+    ])
+  list.take(declared, 2) |> should.equal([server, x_search])
+  refs |> should.equal([tools.Ref("clientfn_web_search", "web_search", "")])
+  tools.wire_call(value("{\"name\":\"web_search\",\"namespace\":1}"), refs)
+  |> should.be_error
+  let event =
+    value(
+      "{\"type\":\"response.output_item.done\",\"item\":{\"type\":\"web_search_call\",\"id\":\"synthetic\",\"status\":\"completed\"}}",
+    )
+  request.restore_event(event, refs) |> should.equal(event)
+  let body =
+    value(
+      "{\"model\":\"grok-4.7\",\"input\":[],\"tools\":[{\"type\":\"web_search\"}],\"tool_choice\":{\"type\":\"web_search\"}}",
+    )
+  let assert Ok(prepared) =
+    request.prepare(config(), endpoint.Responses, body, "")
+  ir.field(prepared.body, "tool_choice")
+  |> should.equal(ir.field(body, "tool_choice"))
+  request.prepare(
+    config(),
+    endpoint.Responses,
+    tools.set(body, "tools", ir.Array([])),
+    "",
   )
+  |> should.be_error
 }
 
 pub fn http_compact_ws_request_controls_test() {

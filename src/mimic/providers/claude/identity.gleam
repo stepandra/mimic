@@ -5,6 +5,7 @@ import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import mimic/ir
+import mimic/providers/claude/json_guard
 
 pub type Account {
   Account(device_id: String, account_uuid: String)
@@ -41,7 +42,7 @@ pub fn apply(
     None -> Ok([])
     Some(ir.String(value)) -> {
       use value <- result.try(
-        ir.parse(value)
+        json_guard.parse_native(value, 8_388_608)
         |> result.map_error(fn(_) {
           "Unsupported Claude metadata.user_id encoding"
         }),

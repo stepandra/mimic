@@ -88,12 +88,46 @@ pub fn run(
   cancel: fn(handle) -> Nil,
   emit: fn(stream.Event) -> Result(Control, String),
 ) -> Result(stream.Outcome, Failure(upstream_error)) {
-  case stream.outcome(state) {
-    Some(_) -> {
+  pump(state, handle, next, cancel, False, Nil, fn(_, event) {
+    emit(event) |> result.map(fn(control) { #(Nil, control) })
+  })
+  |> result.map(fn(pair) { pair.0 })
+}
+
+/// Caller-owned accumulation without side effects that prematurely grant receipts.
+/// Unlike run, this waits for transport EOF after the protocol terminal. The
+/// accumulator is returned only after successful framing/terminal validation
+/// (or explicit local Cancel, whose outcome is Cancelled). A later malformed
+/// frame, I/O failure or downstream failure returns no accumulator.
+/// Keep accumulated native history bounded; this function is not a receipt store.
+pub fn run_fold(
+  state: stream.Stream,
+  handle: handle,
+  next: fn(handle) -> Result(Option(#(BitArray, handle)), upstream_error),
+  cancel: fn(handle) -> Nil,
+  initial: accumulator,
+  emit: fn(accumulator, stream.Event) -> Result(#(accumulator, Control), String),
+) -> Result(#(stream.Outcome, accumulator), Failure(upstream_error)) {
+  pump(state, handle, next, cancel, True, initial, emit)
+}
+
+fn pump(
+  state: stream.Stream,
+  handle: handle,
+  next: fn(handle) -> Result(Option(#(BitArray, handle)), upstream_error),
+  cancel: fn(handle) -> Nil,
+  wait_for_eof: Bool,
+  accumulated: accumulator,
+  emit: fn(accumulator, stream.Event) -> Result(#(accumulator, Control), String),
+) -> Result(#(stream.Outcome, accumulator), Failure(upstream_error)) {
+  case stream.outcome(state), wait_for_eof {
+    Some(_), False -> {
       cancel(handle)
-      stream.finish(state) |> result.map_error(Protocol)
+      stream.finish(state)
+      |> result.map(fn(outcome) { #(outcome, accumulated) })
+      |> result.map_error(Protocol)
     }
-    None ->
+    _, _ ->
       case next(handle) {
         Error(error) -> {
           cancel(handle)
@@ -101,26 +135,37 @@ pub fn run(
         }
         Ok(None) -> {
           cancel(handle)
-          stream.finish(state) |> result.map_error(Protocol)
+          stream.finish(state)
+          |> result.map(fn(outcome) { #(outcome, accumulated) })
+          |> result.map_error(Protocol)
         }
         Ok(Some(#(bytes, current))) -> {
           let batch = stream.feed_partial(state, bytes)
-          case deliver(batch.events, emit) {
+          case deliver(batch.events, accumulated, emit) {
             Error(error) -> {
               cancel(current)
               Error(Downstream(error))
             }
-            Ok(Cancel) -> {
+            Ok(#(accumulated, Cancel)) -> {
               cancel(current)
-              Ok(stream.Cancelled)
+              Ok(#(stream.Cancelled, accumulated))
             }
-            Ok(Continue) -> {
+            Ok(#(accumulated, Continue)) -> {
               case batch.next {
                 Error(error) -> {
                   cancel(current)
                   Error(Protocol(error))
                 }
-                Ok(state) -> run(state, current, next, cancel, emit)
+                Ok(state) ->
+                  pump(
+                    state,
+                    current,
+                    next,
+                    cancel,
+                    wait_for_eof,
+                    accumulated,
+                    emit,
+                  )
               }
             }
           }
@@ -131,15 +176,17 @@ pub fn run(
 
 fn deliver(
   events: List(stream.Event),
-  emit: fn(stream.Event) -> Result(Control, String),
-) -> Result(Control, String) {
+  accumulated: accumulator,
+  emit: fn(accumulator, stream.Event) -> Result(#(accumulator, Control), String),
+) -> Result(#(accumulator, Control), String) {
   case events {
-    [] -> Ok(Continue)
+    [] -> Ok(#(accumulated, Continue))
     [event, ..rest] -> {
-      use control <- result.try(emit(event))
+      use pair <- result.try(emit(accumulated, event))
+      let #(accumulated, control) = pair
       case control {
-        Cancel -> Ok(Cancel)
-        Continue -> deliver(rest, emit)
+        Cancel -> Ok(pair)
+        Continue -> deliver(rest, accumulated, emit)
       }
     }
   }

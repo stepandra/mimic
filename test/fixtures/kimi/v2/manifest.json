@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "scope": "synthetic-kimi-loopback-http-1.1",
+  "snapshot": "wire-snapshot.json",
+  "sha256": "63bfc7c7ed4f805a9ecd03fd4c69e9d16f385ba4466f33979ba2529daaabebe5",
+  "modes": ["api_key", "oauth:kimi.com", "oauth:kimi.ai"],
+  "upstream_model": "kimi-for-coding",
+  "downstream_model": "kimi-k2.7-code",
+  "live_provider": false,
+  "generated_from": "actual assembled CLI loopback observation; observe(api_key, None)",
+  "base": "3e00808ff0fefbb6728edb1769c17139ef0fd93a",
+  "kimi_source_archive_sha256": "bb17b35359aba919bc3224cc18b062964c1d9bcdc72522d92a24343c65e60905",
+  "shared_s4_archive_sha256": "f318501aaaa1cbf5a8c477097b871387b6a85f30a9692c2f9cdda1dc524bb5bc",
+  "integration_source_sha256": {
+    "src/mimic/gateway.gleam": "d9676d4b0228c1b0ba91bc340f5a279dac5b184e5fddd2cc5b0fb45347b33024",
+    "src/mimic/gateway/config.gleam": "cac362318cc2dfe7ae7b500f0dd36569c31c13bc0e7a9ec9012c0219e00661f7"
+  },
+  "supersedes_snapshot_sha256": "af43aaa92579e09d1a480a8b8ceb069e8c2042a3168d12184457b29453508381"
+}

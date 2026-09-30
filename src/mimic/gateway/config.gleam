@@ -16,6 +16,7 @@ import mimic/providers/codex/oauth as codex_oauth
 import mimic/providers/contracts
 import mimic/providers/kimi/models as kimi_models
 import mimic/providers/kimi/oauth as kimi_oauth
+import mimic/providers/kimi_compat/request as kimi_compat
 import mimic/providers/runtime
 import mimic/providers/xai/models as xai_models
 
@@ -127,6 +128,10 @@ pub fn decode(source: String) -> Result(Config, String) {
           list.try_each(a.models, fn(model) {
             xai_models.registration(model) |> safe |> result.map(fn(_) { Nil })
           })
+        "openai-compatible-kimi", "api_key", _ ->
+          list.try_each(a.models, fn(model) {
+            kimi_compat.registration(model) |> safe |> result.map(fn(_) { Nil })
+          })
         "kimi", "api_key", _ | "kimi", "oauth", _ -> {
           use _ <- result.try(case a.auth_mode, a.oauth {
             "oauth", Some(KimiOAuth(_)) | "api_key", _ -> Ok(Nil)
@@ -170,7 +175,10 @@ fn account(value: ir.Value) -> Result(Account, String) {
   })
   use base_path <- result.try(case provider, ir.field(value, "base_path") {
     "kimi", None -> Ok("/coding")
-    "kimi", Some(ir.String(path)) -> {
+    "openai-compatible-kimi", None -> Ok("/v1")
+    "kimi", Some(ir.String(path))
+    | "openai-compatible-kimi", Some(ir.String(path))
+    -> {
       case
         { path == "" || string.starts_with(path, "/") }
         && !string.ends_with(path, "/")
@@ -188,7 +196,7 @@ fn account(value: ir.Value) -> Result(Account, String) {
       }
     }
     _, None -> Ok("")
-    _, _ -> Error("base_path is only supported for Kimi")
+    _, _ -> Error("base_path is only supported for native or generic Kimi")
   })
   use parsed <- result.try(uri.parse(origin) |> safe)
   let egress = case parsed.scheme, parsed.host {

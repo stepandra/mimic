@@ -70,19 +70,22 @@ pub fn select(config: Config, operation: Operation) -> Result(Plan, String) {
     WebSocket if !config.websockets -> Error("xAI WebSocket is not enabled")
     WebSocket -> Ok(option.unwrap(config.websocket_base, api_base))
     Compact -> Ok(option.unwrap(config.compact_base, api_base))
-    Chat | Responses ->
-      Ok(
-        option.unwrap(config.http_base, case config.using_api {
-          True -> api_base
-          False -> proxy_base
-        }),
-      )
+    Chat | Responses -> {
+      let configured = trim_slashes(option.unwrap(config.http_base, api_base))
+      Ok(case config.using_api || configured != api_base {
+        True -> configured
+        False -> proxy_base
+      })
+    }
   })
   let base = trim_slashes(base)
   use _ <- result.try(validate_base(base, config.policy))
   use _ <- result.try(case operation {
-    Compact | WebSocket if base == proxy_base ->
-      Error("Grok CLI proxy does not support compact or WebSocket")
+    Compact | WebSocket ->
+      case is_proxy(base) {
+        True -> Error("Grok CLI proxy does not support compact or WebSocket")
+        False -> Ok(Nil)
+      }
     _ -> Ok(Nil)
   })
   let path = case operation {
@@ -104,6 +107,14 @@ pub fn select(config: Config, operation: Operation) -> Result(Plan, String) {
       && operation != Compact
       && operation != WebSocket,
   ))
+}
+
+fn is_proxy(base: String) -> Bool {
+  case uri.parse(base) {
+    Ok(uri.Uri(host: Some(host), ..)) ->
+      string.lowercase(host) == "cli-chat-proxy.grok.com"
+    _ -> False
+  }
 }
 
 pub fn validate_base(

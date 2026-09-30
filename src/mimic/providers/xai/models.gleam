@@ -1,5 +1,6 @@
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import mimic/providers/contracts
 import mimic/providers/registry
@@ -146,18 +147,58 @@ pub fn requires_conversation(id: String) -> Bool {
 /// Reference metadata is not account entitlement. The operator still lists
 /// enabled models on each runtime account; only native HTTP is advertised.
 pub fn registration(id: String) -> Result(registry.Model, String) {
+  registration_for(id, endpoint.defaults(endpoint.ApiKey))
+  |> result.map(fn(model) {
+    // Existing root route uses the legacy raw prepare hook. Only the native
+    // adapter factory + registration_for may advertise reversible tools.
+    registry.Model(..model, capabilities: [contracts.Buffer, contracts.Stream])
+  })
+}
+
+/// Explicit operator mode/transport enablement, not an entitlement claim.
+/// Continuation capability is connection-scoped WS only; HTTP still rejects it.
+pub fn registration_for(
+  id: String,
+  config: endpoint.Config,
+) -> Result(registry.Model, String) {
   case lookup(id) {
-    Some(model) if !model.build_only && !model.isolated_conversation ->
-      Ok(
-        registry.Model(
-          "xai",
-          id,
-          ["api_key"],
-          ["responses"],
-          ["responses", "responses/compact"],
-          [contracts.Buffer, contracts.Stream],
-        ),
-      )
-    _ -> Error("xAI model is unavailable for the native API-key HTTP adapter")
+    Some(model) if !model.isolated_conversation -> {
+      case model.build_only && config.using_api {
+        True -> Error("Grok Build model requires CLI proxy mode")
+        False ->
+          Ok(
+            registry.Model(
+              "xai",
+              id,
+              [
+                case config.mode {
+                  endpoint.ApiKey -> "api_key"
+                  endpoint.DeviceOAuth -> "oauth"
+                },
+              ],
+              ["responses"],
+              case config.websockets {
+                True -> [
+                  "responses",
+                  "responses/compact",
+                  "responses/websocket",
+                ]
+                False -> ["responses", "responses/compact"]
+              },
+              case config.websockets {
+                True -> [
+                  contracts.Buffer,
+                  contracts.Stream,
+                  contracts.Tools,
+                  contracts.WebSocket,
+                  contracts.Continuation,
+                ]
+                False -> [contracts.Buffer, contracts.Stream, contracts.Tools]
+              },
+            ),
+          )
+      }
+    }
+    _ -> Error("xAI model is unavailable for the native adapter")
   }
 }

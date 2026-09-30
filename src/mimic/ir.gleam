@@ -5,6 +5,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import mimic/ir/json_guard
 
 /// A lossless JSON tree. Unknown vendor extensions remain data, never discarded.
 pub type Value {
@@ -106,7 +107,26 @@ pub type StreamEvent {
   StreamError(Value)
 }
 
+/// Reject ambiguous decoded object keys before a dictionary chooses a winner.
+/// Native structural fidelity does not preserve formatting or numeric spelling.
 pub fn parse(source: String) -> Result(Value, String) {
+  parse_bounded(source, 16_777_216, 128, 1_048_576)
+}
+
+/// Smaller boundary budgets can be selected without introducing another codec.
+/// Limits count UTF-8 bytes, nested containers and JSON values respectively.
+pub fn parse_bounded(
+  source: String,
+  max_bytes: Int,
+  max_depth: Int,
+  max_values: Int,
+) -> Result(Value, String) {
+  use _ <- result.try(json_guard.validate(
+    source,
+    max_bytes,
+    max_depth,
+    max_values,
+  ))
   case json.parse(source, decode.dynamic) {
     Ok(value) -> from_dynamic(value)
     Error(_) -> Error("invalid JSON")
