@@ -3,8 +3,9 @@
 **Status: six umbrella threads started; three follow-up umbrellas pending.**
 
 One numbered slice below means one internal child assignment and one observable
-deliverable. There are **43 slices in nine umbrella threads**, not 43
-simultaneous jobs. Each umbrella runs at most one implementation child at a
+deliverable. There are **44 slices across the nine-umbrella plan**, including
+the newly discovered F44 boundary defect, not 44 simultaneous jobs.
+Each umbrella runs at most one implementation child at a
 time. The target is closure of the remaining declared compatibility contract,
 not another set of provider libraries waiting for an integration megathread.
 
@@ -221,11 +222,35 @@ No live pass is accepted from authorization metadata or public discovery alone.
 
 | ID | Thread / one deliverable | Dependencies | Acceptance |
 | --- | --- | --- | --- |
-| F43 | **Publish the qualified parity release** | Accepted required slices and explicit scope decisions | Independently verify the exact integrated candidate, full Gleam/Python/root/shipment gates, strict paired differential report, native verdicts, live evidence/limits and absence of secrets. Publish through JJ only under current user authorization; verify remote SHA and CI. If a required gate is red, report the exact blocker rather than implementing it inside this thread or relabelling it passed. |
+| F43 | **Publish the qualified parity release** | Accepted required slices, F44 and explicit scope decisions | Independently verify the exact integrated candidate, full Gleam/Python/root/shipment gates, strict paired differential report, native verdicts, live evidence/limits and absence of secrets. Publish through JJ only under current user authorization; verify remote SHA and CI. If a required gate is red, report the exact blocker rather than implementing it inside this thread or relabelling it passed. |
 
 If the user requests an intermediate integration publication, that is possible
 with its current honest capability matrix, as in the previous wave. It is not
 the F43 qualified-parity outcome.
+
+## H. Discovered boundary defect — explicit additional slice
+
+| ID | Thread / one deliverable | Dependencies | Acceptance |
+| --- | --- | --- | --- |
+| F44 | **Preserve HTTP/1 request boundaries under coalescing** | F05 source-bound reproduction; exclusive coordinator vendor slot | Correctly consume two legal coalesced keepalive requests without treating the second request as the first body, throwing `FunctionClause`, losing bytes or hanging. Compare sequential and coalesced GET/GET and fixed-body POST/GET, byte splits, response order and exact handler bodies. Preserve strict rejection of ambiguous CL/TE and zero-dispatch closure, ordinary HTTP/1.0, single-body coalescing and WS upgrade rest bytes. Carry the known-red scenario until fixed; root and shipment regressions are required. |
+
+F44 is **queued, not assigned or implemented**, under coordinator-controlled
+vendor ownership. It uses an existing umbrella's single-child slot when
+explicitly granted; no tenth top-level thread is created.
+
+F05 owner supplied an exact pre/post parser control manifest,
+SHA-256 `b999a8dbf847cecb2d641755fa8dc83073fa84d458cfe096c2c881e5106065a6`.
+The coordinator verified that manifest's hash, not independently rerun its
+tests. Both parser versions reportedly fail legal coalesced requests while
+sequential controls pass. This supports an inherited boundary defect, not a
+regression caused by the new singleton-header rejection. Exact affected
+routes and a production fix still need qualification.
+
+The narrow F05 security patch can be admitted with its passing boundary
+tests and explicit limitations. Its known-red legal-pipelining scenario must
+remain separately executable and visible; it is not waived, deleted or counted
+as a pass. F44 blocks the final qualified release even if the narrower
+security patch is published earlier.
 
 ## Launch order and practical concurrency
 
