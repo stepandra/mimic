@@ -1,0 +1,509 @@
+{
+  "schema": "mimic.f30-claude-fixtures/v1",
+  "slice": "F30",
+  "provider": "claude",
+  "provenance": "SYNTHETIC",
+  "approval": "pending_f01_mapping_and_qualification",
+  "mimic_base_revision": "ca86b531cea7e1a509ac8e6038604fe91819ac07",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "dependencies": {"F03": "not_admitted", "F08": "not_admitted", "F09": "not_admitted", "F10": "not_admitted"},
+  "comparison": {
+    "headers": "ordered_case_sensitive_pairs",
+    "target": "exact",
+    "body": "utf8_exact_text",
+    "sse": "exact_chunks_frames_and_terminal",
+    "normalization": "none",
+    "differences": "decision_required_never_match"
+  },
+  "required_future_hashes": ["source", "driver", "fixture", "dependency", "executable", "shipment", "contract"],
+  "cases": [
+    {
+      "id": "final-v1-claude-messages-wire",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["test/parity/v2/manifest.json#claude-messages", "src/mimic/providers/claude/request.gleam", "docs/CLAUDE_POLICY_SOURCE_V1.md"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages?beta=true",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"], ["Anthropic-Beta", "synthetic-beta-b,synthetic-beta-a"], ["anthropic-beta", "synthetic-beta-b"]],
+          "body": "{ \"model\":\"synthetic-model\", \"max_tokens\":8, \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}], \"synthetic_extension\":{\"b\":2,\"a\":1} }\n"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 200,
+          "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+          "body_chunks": ["{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-model\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC pong\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["capture_ingress_and_upstream_headers_separately_without_sorting", "upstream_target_is_v1_messages_beta_true", "selected_api_key_only_no_caller_authorization", "preserve_unknown_json_extensions", "record_every_response_header_and_raw_body"],
+      "expected": {"kind": "observation", "scope": "none", "failure": null, "send_state": null, "downstream_status": 200, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "No equality asserted. Header forwarding and any body transformation must be observed independently at assembled ingress and upstream.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-count-wire",
+      "row_id": "claude-count",
+      "primary_case_id": "claude-count.final-v1",
+      "source_refs": ["test/parity/v2/manifest.json#claude-count", "src/mimic/providers/claude/request.gleam", "docs/CLAUDE_POLICY_SOURCE_V1.md"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages/count_tokens",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["X-Synthetic-Count", "first"], ["x-synthetic-count", "second"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC count\"}],\"synthetic_extension\":true}"
+        },
+        "responses": [{
+          "endpoint": "count_tokens", "status": 200,
+          "headers": [["Content-Type", "application/json"], ["X-Synthetic-Count", "first"], ["X-Synthetic-Count", "second"]],
+          "body_chunks": ["{ \"input_tokens\":7 }\n"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["upstream_target_is_v1_messages_count_tokens_beta_true", "separate_count_header_profile", "count_prunes_inference_fields_not_extensions", "count_is_returned_from_fixture_not_local_estimate", "synthetic_count_is_not_provider_measurement"],
+      "expected": {"kind": "observation", "scope": "none", "failure": null, "send_state": null, "downstream_status": 200, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "The integer 7 is scripted SYNTHETIC fixture data, not an approved count result or permission to fabricate production counts.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-sse-tool-thinking",
+      "row_id": "claude-thinking",
+      "primary_case_id": "claude-thinking.final-v1",
+      "source_refs": ["test/parity/v2/manifest.json#claude-thinking", "src/mimic/providers/claude/stream.gleam", "docs/CLAUDE_POLICY_HANDOFF_V1.md"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["Accept", "text/event-stream"], ["X-Synthetic", "first"], ["X-Synthetic", "second"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC tool and thinking\"}],\"tools\":[{\"name\":\"synthetic_echo\",\"input_schema\":{\"type\":\"object\"}}]}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 200,
+          "headers": [["Content-Type", "text/event-stream"], ["Content-Encoding", "identity"], ["X-Synthetic", "first"], ["x-synthetic", "second"]],
+          "body_chunks": [
+            "event: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"synthetic-stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-model\",\"content\":[],\"usage\":{\"input_tokens\":2,\"output_tokens\":0}}}\r\n\r\n",
+            ": SYNTHETIC heartbeat\r\n\r\nevent: content_block_start\r\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\r\n\r\n",
+            "event: content_block_delta\r\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"SYNTHETIC thought\"}}\r\n\r\n",
+            "event: content_block_delta\r\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"synthetic-signature\"}}\r\n\r\n",
+            "event: content_block_stop\r\ndata: {\"type\":\"content_block_stop\",\"index\":0}\r\n\r\n",
+            "event: content_block_start\r\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"synthetic-tool-1\",\"name\":\"synthetic_echo\",\"input\":{}}}\r\n\r\n",
+            "event: content_block_delta\r\nda",
+            "ta: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"text\\\":\\\"SYNTHETIC\\\"}\"}}\r\n\r\n",
+            "event: content_block_stop\r\ndata: {\"type\":\"content_block_stop\",\"index\":1}\r\n\r\n",
+            "event: message_delta\r\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":3}}\r\n\r\n",
+            "event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n"
+          ]
+        }],
+        "refresh": null
+      },
+      "assertions": ["oauth_identity_comes_only_from_selected_synthetic_slot", "capture_chunk_schedule_and_raw_sse_without_json_reserialization", "preserve_thinking_signature_tool_id_and_partial_json", "usage_and_message_stop_once", "terminal_disconnect_no_replay", "cleanup_once_zero_leases"],
+      "expected": {"kind": "observation", "scope": "none", "failure": null, "send_state": null, "downstream_status": 200, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "Mapped to historical thinking; also probes streaming/tool framing. Does not satisfy full thinking replay or tool-result continuation coverage.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-native-forced-tool",
+      "row_id": "claude-tools",
+      "primary_case_id": "claude-tools.final-v1",
+      "source_refs": ["test/parity/v2/manifest.json#claude-tools", "docs/CLAUDE_POLICY_SOURCE_V1.md#model--version--auth--request-kind-policy"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["Anthropic-Beta", "synthetic-beta-z,synthetic-beta-a"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC forced tool\"}],\"tools\":[{\"name\":\"synthetic_echo\",\"input_schema\":{\"type\":\"object\"}}],\"tool_choice\":{\"type\":\"any\"},\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":4},\"output_config\":{\"effort\":\"high\",\"synthetic_extension\":\"keep\"},\"temperature\":0.4,\"top_p\":0.8}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 200, "headers": [["Content-Type", "application/json"]],
+          "body_chunks": ["{\"type\":\"message\",\"content\":[{\"type\":\"tool_use\",\"id\":\"synthetic-tool-1\",\"name\":\"synthetic_echo\",\"input\":{}}],\"stop_reason\":\"tool_use\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["forced_tool_removes_thinking_and_only_effort", "preserve_output_config_extension", "native_temperature_wins_over_top_p", "preserve_unmanaged_beta_first_occurrence_order", "do_not_infer_model_capabilities"],
+      "expected": {"kind": "observation", "scope": "none", "failure": null, "send_state": null, "downstream_status": 200, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "Policy intent from pinned source inventory; no executable CPA result. Unknown model capabilities must not be guessed.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-translated-five-minute-policy",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["docs/CLAUDE_POLICY_HANDOFF_V1.md#callback-contract", "docs/CLAUDE_POLICY_SOURCE_V1.md#managedunmanaged-betas-and-cache-ordering"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "translated_messages", "turn": "conversation", "cache": "default_5m", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["User-Agent", "SYNTHETIC-not-native"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"system\":[{\"type\":\"text\",\"text\":\"SYNTHETIC system\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC user\"}]}],\"temperature\":0.4,\"top_p\":0.8,\"top_k\":3}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 200, "headers": [["Content-Type", "application/json"]],
+          "body_chunks": ["{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC pong\"}],\"stop_reason\":\"end_turn\"}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["policy_bound_only_by_authenticated_operator_route", "already_translated_claude_json_not_openai_translation", "translated_removes_temperature_and_top_p", "explicit_opt_in_places_five_minute_cache", "caller_user_agent_cannot_select_native_profile"],
+      "expected": {"kind": "decision_required", "scope": "none", "failure": null, "send_state": null, "downstream_status": null, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Assembled gateway has no admitted binding for this trusted translated-policy closure. CPA cloak/profile settings must be approved and equivalent; a profile mismatch is not a match. This is not claude-chat coverage.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-subagent-explicit-hour",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["docs/CLAUDE_POLICY_SOURCE_V1.md#model--version--auth--request-kind-policy", "src/mimic/providers/claude/cache.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "subagent", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["X-Synthetic-Subagent", "untrusted-caller-hint"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"system\":[{\"type\":\"text\",\"text\":\"SYNTHETIC subagent\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\",\"synthetic_extension\":true}}],\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC ping\"}]}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 200, "headers": [["Content-Type", "application/json"]],
+          "body_chunks": ["{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC pong\"}],\"stop_reason\":\"end_turn\"}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["trusted_subagent_policy_not_caller_hint", "preserve_explicit_valid_one_hour_control_and_extension", "pair_extended_ttl_beta_even_for_api_key", "no_automatic_one_hour_injection"],
+      "expected": {"kind": "observation", "scope": "none", "failure": null, "send_state": null, "downstream_status": 200, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "Source-backed explicit-cache intent only. Trusted subagent binding remains pending F08/F01 qualification.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-helper-hour-rejected",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["docs/CLAUDE_POLICY_SOURCE_V1.md#model--version--auth--request-kind-policy", "src/mimic/providers/claude/adapter.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "helper", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"system\":[{\"type\":\"text\",\"text\":\"SYNTHETIC helper\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC ping\"}]}"
+        },
+        "responses": [], "refresh": null
+      },
+      "assertions": ["mimic_unsupported_not_sent_zero_upstream_requests", "no_account_poisoning_no_pool_replay", "capture_cpa_behavior_as_difference_not_repaired_match"],
+      "expected": {"kind": "decision_required", "scope": "request", "failure": "Unsupported", "send_state": "NotSent", "downstream_status": 503, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "MIMIC rejects explicit 1h helper cache; CPA source can strip TTL. Do not normalize stripping and rejection into equality. Downstream 503 is the base sanitized mapping, not an executed paired result.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-invalid-cache-order",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["docs/CLAUDE_POLICY_SOURCE_V1.md#managedunmanaged-betas-and-cache-ordering", "src/mimic/providers/claude/cache.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"system\":[{\"type\":\"text\",\"text\":\"SYNTHETIC first\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}},{\"type\":\"text\",\"text\":\"SYNTHETIC second\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC ping\"}]}"
+        },
+        "responses": [], "refresh": null
+      },
+      "assertions": ["mimic_rejects_one_hour_after_five_minutes_before_send", "no_silent_marker_deletion_or_ttl_downgrade", "credential_and_quota_state_unchanged"],
+      "expected": {"kind": "decision_required", "scope": "request", "failure": "Unsupported", "send_state": "NotSent", "downstream_status": 503, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "CPA may delete/downgrade invalid cache markers; MIMIC rejects. The operator must decide compatibility versus retained hardening.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-duplicate-user-id",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["docs/CLAUDE_POLICY_HANDOFF_V1.md#callback-contract", "src/mimic/providers/claude/json_guard.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"metadata\":{\"user_id\":\"synthetic-first\",\"user\\u005fid\":\"synthetic-second\"},\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC ping\"}]}"
+        },
+        "responses": [], "refresh": null
+      },
+      "assertions": ["raw_duplicate_escaped_key_survives_fixture_loader", "mimic_unsupported_not_sent_zero_upstream", "no_caller_identity_replaces_selected_private_metadata", "no_retry_or_credential_quota_mutation"],
+      "expected": {"kind": "decision_required", "scope": "request", "failure": "Unsupported", "send_state": "NotSent", "downstream_status": 503, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Ambiguous caller metadata is a request error, not invalid credentials. CPA duplicate handling must be observed; do not preselect or erase a duplicate key.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-refresh-singleflight",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["test/parity/v2/manifest.json#claude-oauth", "src/mimic/providers/claude/adapter.gleam#refresher", "test/claude_runtime_v4_test.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages",
+          "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["X-Synthetic-Session", "same-session"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"metadata\":{\"synthetic_extension\":\"keep\"},\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC refresh\"}]}"
+        },
+        "responses": [
+          {
+            "endpoint": "oauth_refresh", "status": 200,
+            "headers": [["Content-Type", "application/json"], ["X-Synthetic-Refresh", "first"], ["x-synthetic-refresh", "second"]],
+            "body_chunks": ["{\"access_token\":\"synthetic-access-new\",\"refresh_token\":\"synthetic-refresh-new\",\"expires_in\":3600,\"token_type\":\"Bearer\"}"]
+          },
+          {
+            "endpoint": "messages", "status": 200, "headers": [["Content-Type", "application/json"]],
+            "body_chunks": ["{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC refreshed\"}],\"stop_reason\":\"end_turn\"}"]
+          }
+        ],
+        "refresh": {"parallel_requests": 2, "expires_at_ms": 500, "barriers": ["hold_token_response_until_both_waiters", "repeat_messages_response_for_each_waiter", "fresh_restart_no_reseed"]}
+      },
+      "assertions": ["one_token_exchange_two_waiters_same_generation", "persist_rotated_material_before_messages", "retain_device_account_organization_private_metadata", "selected_oauth_bearer_not_caller_auth", "account_session_origin_scoped_identity", "restart_reuses_persisted_generation_no_reseed", "no_credential_values_in_observations_logs_or_reports"],
+      "expected": {"kind": "observation", "scope": "none", "failure": null, "send_state": null, "downstream_status": 200, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "Barriers, clock, synthetic private identity and isolated token endpoint bindings are unqualified. Values beginning synthetic- are fixture markers only, never ambient credentials.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-refresh-duplicate-envelope",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["docs/CLAUDE_OAUTH_JSON_VALIDATION.md#fix", "src/mimic/providers/claude/adapter.gleam#refresher"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC ambiguous refresh\"}]}"
+        },
+        "responses": [{
+          "endpoint": "oauth_refresh", "status": 200, "headers": [["Content-Type", "application/json"]],
+          "body_chunks": ["{\"access_token\":\"synthetic-access-new\",\"refresh_token\":\"synthetic-first\",\"refresh\\u005ftoken\":\"synthetic-second\",\"expires_in\":3600}"]
+        }],
+        "refresh": {"parallel_requests": 1, "expires_at_ms": 500, "barriers": ["restart_after_ambiguous_grant_no_reseed"]}
+      },
+      "assertions": ["reject_decoded_duplicate_before_json_dictionary", "invalid_response_maps_to_refresh_unavailable", "persist_uncertainty_recovery_fence", "zero_messages_requests_no_unsafe_refresh_retry", "no_invalid_grant_or_quota_relabel", "no_token_or_private_body_in_failure_report"],
+      "expected": {"kind": "decision_required", "scope": "credential_refresh", "failure": "RefreshUnavailable", "send_state": null, "downstream_status": null, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Refresh outcome is uncertain; it is not an ordinary request error, definitive invalid_grant, or retry-safe quota error. Record both implementations and retain MIMIC's recovery fence.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-refresh-429-json",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["docs/CLAUDE_OAUTH_JSON_VALIDATION.md#fix", "test/claude_runtime_v4_test.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC deferred refresh\"}]}"
+        },
+        "responses": [{
+          "endpoint": "oauth_refresh", "status": 429,
+          "headers": [["Content-Type", "application/json"], ["Retry-After", "17"], ["X-Synthetic-Refresh", "first"], ["X-Synthetic-Refresh", "second"]],
+          "body_chunks": ["{\"error\":\"rate_limit_error\"}"]
+        }],
+        "refresh": {"parallel_requests": 2, "expires_at_ms": 500, "barriers": ["hold_token_response_until_both_waiters", "check_gate_at_17999_ms", "check_gate_at_18000_ms", "restart_before_gate_deadline"]}
+      },
+      "assertions": ["unambiguous_token_429_maps_refresh_rate_limited_17000_ms", "singleflight_waiters_share_completion_deadline", "refresh_gate_persisted_not_messages_quota_ledger", "no_token_request_before_18000_ms", "zero_messages_upstream_requests", "not_equivalent_to_messages_429"],
+      "expected": {"kind": "observation", "scope": "credential_refresh", "failure": "RefreshRateLimited", "send_state": null, "downstream_status": null, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "Token endpoint classification is separate from Messages 429. Gate deadline is a proposed synthetic-clock observation; no deadline or refresh execution has been measured here.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-request-model-mismatch",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["src/mimic/providers/claude/adapter.gleam#prepare_with_policy", "docs/CLAUDE_POLICY_HANDOFF_V1.md#callback-contract"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-wrong-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC wrong model\"}]}"
+        },
+        "responses": [], "refresh": null
+      },
+      "assertions": ["qualified_route_selects_synthetic_model_independently_of_body", "request_mismatch_is_unsupported_not_sent", "zero_requests_to_either_account", "valid_followup_on_a_succeeds_without_credential_recovery"],
+      "expected": {"kind": "decision_required", "scope": "request", "failure": "Unsupported", "send_state": "NotSent", "downstream_status": 503, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Needs a qualified assembled route selecting the model independently. A direct adapter call cannot count as paired acceptance; current route selection may reject earlier or derive the model from the body.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-request-400",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["src/mimic/providers/claude/adapter.gleam#rejection", "src/mimic/gateway.gleam#serve_claude"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC request error\"}]}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 400,
+          "headers": [["Content-Type", "application/json"], ["X-Synthetic-Private", "do-not-forward"]],
+          "body_chunks": ["{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"SYNTHETIC private request detail\"}}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["request_scope_one_upstream_a_zero_b", "no_credential_quarantine_or_quota_cooldown", "sanitized_downstream_502_no_private_body_headers", "normal_followup_to_a_succeeds"],
+      "expected": {"kind": "rejection", "scope": "request", "failure": null, "send_state": null, "downstream_status": 502, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Base gateway sanitizes rejected non-2xx to 502. CPA's actual downstream shape must be recorded; hiding a status/body difference is forbidden. F09 request-scope binding is not admitted.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-credential-401",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["src/mimic/providers/claude/adapter.gleam#rejection", "src/mimic/providers/runtime.gleam#retryable"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC credential error\"}]}"
+        },
+        "responses": [
+          {
+            "endpoint": "messages", "status": 401,
+            "headers": [["Content-Type", "application/json"], ["X-Synthetic-Private", "do-not-forward"]],
+            "body_chunks": ["{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"SYNTHETIC private credential detail\"}}"]
+          },
+          {
+            "endpoint": "messages", "status": 200, "headers": [["Content-Type", "application/json"]],
+            "body_chunks": ["{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC account b\"}],\"stop_reason\":\"end_turn\"}"]
+          }
+        ],
+        "refresh": null
+      },
+      "assertions": ["a_401_is_credential_unavailable_rejected_not_request_scope", "retryable_without_account_pin_only", "qualified_scheduler_tries_a_then_b_once", "no_messages_429_quota_claim", "zero_remaining_leases_no_private_failure_forwarding"],
+      "expected": {"kind": "observation", "scope": "credential", "failure": "CredentialUnavailable", "send_state": "Rejected", "downstream_status": 200, "quota_effect": "none", "retry": true},
+      "difference": {"status": "none", "note": "Failure fields describe the first account's 401, not the eventual paired result. Ordering/no-pin bindings are unqualified; retryability does not prove durable credential quarantine.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-messages-429-fast-refusal",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["docs/CLAUDE_429_HANDOFF_V1.md#root-cause-and-boundary", "src/mimic/providers/claude/transport.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"speed\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC fast refusal\"}]}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 429,
+          "headers": [["Content-Type", "application/json"], ["Retry-After", "3600"], ["Anthropic-RateLimit-Requests-Remaining", "0"], ["X-Synthetic-Private", "do-not-forward"]],
+          "body_chunks": ["{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"SYNTHETIC fast-mode credits unavailable\"}}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["base_closes_handle_before_body_read_and_runtime_observe", "unsupported_rejected_one_a_zero_b", "quota_ledger_byte_identical", "no_retry_after_or_private_body_forwarding", "followup_a_succeeds_before_and_after_restart"],
+      "expected": {"kind": "decision_required", "scope": "ambiguous_response", "failure": "Unsupported", "send_state": "Rejected", "downstream_status": 503, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Synthetic body suggests a request entitlement refusal but base transport intentionally does not read/classify it. F10 is not admitted. Preserve CPA behavior versus conservative Unsupported/503 as a decision, not request-scope classification evidence.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-messages-429-quota",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["docs/CLAUDE_429_HANDOFF_V1.md#root-cause-and-boundary", "src/mimic/providers/claude/transport.gleam"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC quota refusal\"}]}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 429,
+          "headers": [["Content-Type", "application/json"], ["Retry-After", "17"], ["X-Synthetic-Quota", "first"], ["x-synthetic-quota", "second"]],
+          "body_chunks": ["{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"SYNTHETIC credential quota exhausted\"}}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["all_messages_429_remain_unsupported_rejected_until_f10", "do_not_claim_genuine_quota_detection_or_failover", "one_a_zero_b_no_body_read_no_quota_mutation", "sanitized_503_without_retry_hints"],
+      "expected": {"kind": "decision_required", "scope": "ambiguous_response", "failure": "Unsupported", "send_state": "Rejected", "downstream_status": 503, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "The scripted quota-looking body is not classified by the base. Genuine quota also forgoes cooldown/failover until F10 qualification; CPA differences cannot be normalized away.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-refresh-invalid-grant",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["src/mimic/providers/claude/adapter.gleam#refresher", "docs/CLAUDE_OAUTH_JSON_VALIDATION.md#fix"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC definitive grant refusal\"}]}"
+        },
+        "responses": [{
+          "endpoint": "oauth_refresh", "status": 400,
+          "headers": [["Content-Type", "application/json"], ["X-Synthetic-Private", "do-not-forward"]],
+          "body_chunks": ["{\"error\":\"invalid_grant\",\"error_description\":\"SYNTHETIC private grant detail\"}"]
+        }],
+        "refresh": {"parallel_requests": 1, "expires_at_ms": 500, "barriers": ["restart_after_definitive_invalid_grant_no_reseed"]}
+      },
+      "assertions": ["unambiguous_token_invalid_grant_maps_invalid_grant", "reauthorization_required_not_request_or_quota_scope", "no_messages_send_or_unsafe_token_replay", "persist_selected_credential_generation_gate", "ambiguous_json_must_not_be_promoted_to_invalid_grant"],
+      "expected": {"kind": "observation", "scope": "credential_refresh", "failure": "InvalidGrant", "send_state": null, "downstream_status": null, "quota_effect": "none", "retry": false},
+      "difference": {"status": "none", "note": "The InvalidGrant label is the provider Refresh callback outcome; runtime reauthorization and downstream presentation require qualified bindings and observations.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-refresh-429-ambiguous",
+      "row_id": "claude-oauth",
+      "primary_case_id": "claude-oauth.final-v1",
+      "source_refs": ["docs/CLAUDE_OAUTH_JSON_VALIDATION.md#reproduction-and-root-cause", "src/mimic/providers/claude/adapter.gleam#refresher"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "oauth", "credential_slots": ["synthetic-a"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC ambiguous token 429\"}]}"
+        },
+        "responses": [{
+          "endpoint": "oauth_refresh", "status": 429,
+          "headers": [["Content-Type", "application/json"], ["Retry-After", "17"]],
+          "body_chunks": ["{\"error\":\"rate_limit_error\",\"error\":\"invalid_grant\"}"]
+        }],
+        "refresh": {"parallel_requests": 1, "expires_at_ms": 500, "barriers": ["restart_after_ambiguous_grant_no_reseed"]}
+      },
+      "assertions": ["all_token_statuses_parse_duplicate_aware_raw_json_first", "ambiguous_429_maps_refresh_unavailable_not_rate_limited", "not_definitive_invalid_grant_despite_last_error_value", "persist_uncertainty_fence_no_retry_after_gate_inference", "zero_messages_requests"],
+      "expected": {"kind": "decision_required", "scope": "credential_refresh", "failure": "RefreshUnavailable", "send_state": null, "downstream_status": null, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "The same token 429 status/Retry-After as the unambiguous probe must not bypass duplicate-envelope hardening. CPA behavior remains unobserved; neither quota nor definitive invalid_grant may be inferred.", "normalization": "none"}
+    },
+    {
+      "id": "final-v1-claude-request-403",
+      "row_id": "claude-messages",
+      "primary_case_id": "claude-messages.final-v1",
+      "source_refs": ["src/mimic/providers/claude/adapter.gleam#rejection", "src/mimic/gateway.gleam#serve_claude"],
+      "stimulus": {
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "auth_mode": "api_key", "credential_slots": ["synthetic-a", "synthetic-b"], "selected_model": "synthetic-model", "clock_ms": 1000,
+        "operator_policy": {"input": "native_messages", "turn": "conversation", "cache": "preserve", "profile": "none"},
+        "request": {
+          "method": "POST", "target": "/v1/messages", "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"]],
+          "body": "{\"model\":\"synthetic-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC request permission error\"}]}"
+        },
+        "responses": [{
+          "endpoint": "messages", "status": 403,
+          "headers": [["Content-Type", "application/json"], ["X-Synthetic-Private", "do-not-forward"]],
+          "body_chunks": ["{\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"SYNTHETIC request permission detail\"}}"]
+        }],
+        "refresh": null
+      },
+      "assertions": ["base_403_has_no_typed_credential_rejection", "one_request_a_zero_b_no_pool_walk", "not_token_invalid_grant_or_messages_401", "sanitized_502_no_private_body_or_headers", "normal_followup_a_succeeds"],
+      "expected": {"kind": "decision_required", "scope": "request", "failure": null, "send_state": null, "downstream_status": 502, "quota_effect": "none", "retry": false},
+      "difference": {"status": "decision_required", "note": "Request scope here records the base's nonretrying 403 path, not a universal classification of all permission errors. F09/CPA exact body-aware distinctions remain unqualified and must not poison credentials by assumption.", "normalization": "none"}
+    }
+  ]
+}

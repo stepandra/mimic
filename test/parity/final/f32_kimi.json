@@ -1,0 +1,482 @@
+{
+  "schema": "mimic.f32-kimi-fixtures/v1",
+  "slice": "F32",
+  "provider": "kimi",
+  "provenance": "SYNTHETIC",
+  "approval": "UNAPPROVED",
+  "mimic_base_revision": "ca86b531cea7e1a509ac8e6038604fe91819ac07",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "dependencies": {"F03": "not_admitted", "F14": "coordinator_reported_admitted_not_imported", "F15": "peer_reported_admitted_not_imported", "F16": "not_admitted"},
+  "registrations": {
+    "kimi": {
+      "auth_modes": ["api_key", "oauth"], "protocols": ["chat", "responses", "anthropic"],
+      "operations": ["chat/completions", "responses", "messages"],
+      "model_policy": "explicit_known_native_id", "default_base_path": "/coding",
+      "transform_policy": "native_alias_thinking_and_oauth_device_binding"
+    },
+    "openai-compatible-kimi": {
+      "auth_modes": ["api_key"], "protocols": ["chat"], "operations": ["chat/completions"],
+      "model_policy": "explicit_exact_configured_id", "default_base_path": "/v1", "transform_policy": "none"
+    }
+  },
+  "comparison": {
+    "headers": "ordered_case_sensitive_pairs", "target": "exact_raw",
+    "body": "utf8_exact_text", "sse": "raw_chunks_and_frame_bytes_separately",
+    "normalization": [], "differences": "decision_required_never_match"
+  },
+  "required_future_hashes": ["source", "driver", "fixture", "dependency", "executable", "shipment", "contract", "historical_manifest", "clients_lock"],
+  "synthetic_context": {
+    "clock_ms": 1000, "credential_slots": ["synthetic-a", "synthetic-b"],
+    "selected_account": "synthetic-b", "client_session": "synthetic-client-1",
+    "manager_state": "independent_per_target", "target_endpoints": {"cpa": null, "mimic": null},
+    "registration_orders": [["kimi", "openai-compatible-kimi"], ["openai-compatible-kimi", "kimi"]]
+  },
+  "cases": [
+    {
+      "id": "kimi-native.registration-isolation.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Both registrations coexist in either order with the same configured model spelling; native selection never falls through to the generic executor.",
+      "source_refs": ["src/mimic/providers/kimi/models.gleam", "src/mimic/providers/kimi_compat/request.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:sdk/cliproxy/service_executors.go"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "native-same-model-spelling", "protocol": "responses", "operation": "responses", "mode": "buffered",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Content-Type", "application/json"]], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":\"SYNTHETIC registration isolation\",\"stream\":false}\n"},
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"id\":\"synthetic-registration-r\",\"object\":\"response\",\"model\":\"kimi-for-coding\",\"status\":\"completed\",\"output\":[]}\n"]}]
+        }],
+        "controls": {"same_model_in_both_registrations": "kimi-k2.7-code", "selected_account_not_first_configured": true, "account_scope": "provider_auth_account_client_model", "generic_fallback": "forbidden", "registration_order_variants": "synthetic_context.registration_orders"}
+      },
+      "assertions": ["both_executor_registration_orders", "exact_native_backend_selected", "provider_scoped_credential_and_session", "native_coding_prefix_not_generic_api_prefix", "no_model_name_inferred_registration"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Registration intent and mock response data are not CPA executor identity or runtime selection evidence.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.chat-wire-tools.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Native Chat retains explicit tool history, reasoning and opaque argument strings; observe native alias/thinking policy separately from raw ingress.",
+      "source_refs": ["src/mimic/providers/kimi/request.gleam", "src/mimic/providers/kimi/transform.gleam", "src/mimic/providers/kimi/adapter.gleam"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "linked-chat-history", "protocol": "chat", "operation": "chat/completions", "mode": "buffered",
+          "request": {
+            "method": "POST", "target": "/v1/chat/completions?synthetic=%2f&synthetic=%2F",
+            "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body": "{ \"model\":\"kimi-k2.7-code\", \"stream\":false, \"reasoning_effort\":\"high\", \"temperature\":1, \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"},{\"role\":\"assistant\",\"content\":null,\"reasoning_content\":\"SYNTHETIC prior reasoning\",\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{ \\\"model\\\" : \\\"SYNTHETIC user model\\\", \\\"text\\\":\\\"café\\\" }\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":\"SYNTHETIC result\"}], \"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"echo\",\"parameters\":{\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}}], \"synthetic_extension\":{\"b\":2,\"a\":1,\"model\":\"SYNTHETIC nested model\"} }\n"
+          },
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]], "body_chunks": ["{ \"id\":\"synthetic-chat-r\", \"object\":\"chat.completion\", \"model\":\"kimi-for-coding\", \"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC café\",\"reasoning_content\":\"SYNTHETIC reasoning\",\"synthetic_extension\":{\"model\":\"SYNTHETIC nested model\"}},\"finish_reason\":\"stop\"}], \"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"total_tokens\":13} }\n"]}]
+        }],
+        "controls": {"observe_upstream_target": "/coding/v1/chat/completions", "observe_alias": "kimi-k2.7-code_to_kimi-for-coding", "restore_only_protocol_owned_model": true, "tool_schema_missing_root_type": "observe_object_insertion", "arbitrary_ingress_headers_forwarded": "not_assumed"}
+      },
+      "assertions": ["raw_query_escape_case_duplicates", "ingress_and_upstream_headers_observed_separately", "explicit_call_result_ids_and_chronology", "reasoning_history_not_fabricated", "opaque_arguments_and_nested_model_preserved", "native_chat_not_responses_projection", "source_policy_not_byte_parity_assumption"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Raw ingress is retained. Actual native transformations, Content-Length and model restoration must be observed; no rewritten expected capture is supplied.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.chat-sse.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Native Chat SSE retains reasoning/tool fragments and usage while restoring only the protocol-owned model, unlike generic exact-model passthrough.",
+      "source_refs": ["src/mimic/providers/kimi/request.gleam", "src/mimic/providers/kimi/adapter.gleam", "src/mimic/providers/kimi/transform.gleam"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "native-chat-tool-fragments", "protocol": "chat", "operation": "chat/completions", "mode": "streaming",
+          "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]], "body": "{\"model\":\"kimi-k2.7-code\",\"stream\":true,\"reasoning_effort\":\"high\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}}}],\"synthetic_extension\":{\"b\":2,\"a\":1}}\n"},
+          "responses": [{
+            "status": 200, "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": [
+              ": SYNTHETIC heartbeat\r\n\r\ndata: {\"id\":\"synthetic-native-s\",\"object\":\"chat.completion.chunk\",\"model\":\"kimi-for-coding\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"SYNTHETIC café\",\"tool_calls\":[{\"index\":0,\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"model\\\":\\\"SYNTHETIC nested model\\\",\\\"text\\\":\"}}]},\"finish_reason\":null}]}\r\n\r\n",
+              "da",
+              "ta: {\"id\":\"synthetic-native-s\",\"object\":\"chat.completion.chunk\",\"model\":\"kimi-for-coding\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"SYNTHETIC\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\r\n\r\ndata: {\"id\":\"synthetic-native-s\",\"object\":\"chat.completion.chunk\",\"model\":\"kimi-for-coding\",\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"total_tokens\":13,\"synthetic_usage\":{\"b\":2,\"a\":1}}}\r\n\r\n",
+              "data: [DONE]\r\n\r\n"
+            ]
+          }]
+        }],
+        "controls": {"observe_upstream_target": "/coding/v1/chat/completions", "native_include_usage": "observe_insertion_not_prewrite_capture", "restore_only_protocol_owned_model": true, "chunk_schedule": "synthetic_writes_not_tcp_read_boundaries", "terminal_variants": ["finish_without_done", "error_before_done", "disconnect", "cancel"], "generic_contrast": "kimi-generic.chat-sse.final-v1"}
+      },
+      "assertions": ["native_chat_shared_codec_not_responses_projection", "native_model_restoration_not_recursive_user_data_rewrite", "raw_sse_crlf_comments_and_split_field", "tool_argument_fragments_reasoning_and_provider_usage", "finish_not_completion_without_done", "actual_upstream_policy_and_downstream_model_separately_observed"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Authored upstream SSE is not an observed downstream capture. Native transformations must not leak into generic registration or produce an assumed match.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.responses-sse-history.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Native Responses preserves standalone reasoning/function history and source-provided usage, with raw CRLF SSE chunks and a split field name.",
+      "source_refs": ["src/mimic/providers/kimi/request.gleam", "src/mimic/providers/kimi/transform.gleam", "src/mimic/providers/kimi/adapter.gleam"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "standalone-responses-history", "protocol": "responses", "operation": "responses", "mode": "streaming",
+          "request": {
+            "method": "POST", "target": "/v1/responses?synthetic=%2f&synthetic=%2F",
+            "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body": "{ \"model\":\"kimi-k2.7-code\", \"stream\":true, \"reasoning\":{\"effort\":\"high\"}, \"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"SYNTHETIC first\"},{\"type\":\"input_image\",\"image_url\":\"https://synthetic-media.invalid/native.png\"}]},{\"type\":\"reasoning\",\"id\":\"synthetic-reason-1\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"SYNTHETIC prior reasoning\"}],\"encrypted_content\":\"SYNTHETIC opaque reasoning\"},{\"type\":\"function_call\",\"id\":\"synthetic-item-1\",\"call_id\":\"synthetic-call-1\",\"name\":\"echo\",\"arguments\":\"{ \\\"text\\\" : \\\"SYNTHETIC café\\\" }\"},{\"type\":\"function_call_output\",\"call_id\":\"synthetic-call-1\",\"output\":\"SYNTHETIC result\"}], \"tools\":[{\"type\":\"function\",\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}}], \"synthetic_extension\":{\"b\":2,\"a\":1} }\n"
+          },
+          "responses": [{
+            "status": 200, "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": [
+              ": SYNTHETIC heartbeat\r\n\r\nevent: response.created\r\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-native-r\",\"object\":\"response\",\"model\":\"kimi-for-coding\",\"status\":\"in_progress\",\"output\":[]}}\r\n\r\n",
+              "event: response.completed\r\nda",
+              "ta: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-native-r\",\"object\":\"response\",\"model\":\"kimi-for-coding\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":9,\"output_tokens\":4,\"total_tokens\":13,\"output_tokens_details\":{\"reasoning_tokens\":2},\"synthetic_usage\":{\"b\":2,\"a\":1}}}}\r\n\r\n"
+            ]
+          }]
+        }],
+        "controls": {"previous_response_id": "absent_full_history_required", "media_fetch": "forbidden", "observe_upstream_target": "/coding/v1/responses", "chunk_schedule": "synthetic_writes_not_tcp_read_boundaries", "terminal_and_cancel_variants": ["missing_terminal", "remote_error", "cancel_before_terminal", "trailing_corruption"]}
+      },
+      "assertions": ["native_responses_not_chat_rewrite", "reasoning_summary_and_encrypted_content_preserved", "function_call_output_explicit_pairing", "raw_sse_chunks_and_frame_bytes_separate", "provider_usage_not_local_estimate", "terminal_outcome_and_cancel_require_observation"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Terminal/cancellation variants are declarative future controls, not exercised lifecycle outcomes or a second SSE codec.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.messages-signed-tools-images.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Buffered Kimi Messages uses native signed-thinking/tool blocks and image sources without Claude OAuth identity or a Chat projection.",
+      "source_refs": ["src/mimic/providers/kimi/messages.gleam", "src/mimic/providers/kimi/request.gleam", "docs/kimi/native-v2.md"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "signed-messages-history", "protocol": "anthropic", "operation": "messages", "mode": "buffered",
+          "request": {
+            "method": "POST", "target": "/v1/messages?beta=true&synthetic=%2f&synthetic=%2F",
+            "headers": [["Content-Type", "application/json"], ["anthropic-version", "2023-06-01"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body": "{\"model\":\"kimi-k2.7-code\",\"stream\":false,\"max_tokens\":512,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":128},\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC café\"},{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://synthetic-media.invalid/native.png\"}},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/gif\",\"data\":\"R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\"}}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"SYNTHETIC prior reasoning\",\"signature\":\"SYNTHETIC signature\"},{\"type\":\"redacted_thinking\",\"data\":\"SYNTHETIC opaque data\"},{\"type\":\"tool_use\",\"id\":\"synthetic-call-1\",\"name\":\"echo\",\"input\":{\"text\":\"SYNTHETIC\",\"model\":\"SYNTHETIC user model\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"synthetic-call-1\",\"content\":\"SYNTHETIC result\"}]}],\"tools\":[{\"name\":\"echo\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}}],\"synthetic_extension\":{\"b\":2,\"a\":1}}\n"
+          },
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"id\":\"synthetic-message-r\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"kimi-for-coding\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC result\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}\n"]}]
+        }],
+        "controls": {"observe_upstream_target": "/coding/v1/messages?beta=true", "credential_identity": "kimi_not_claude", "media_fetch": "forbidden", "inline_media_provenance": "SYNTHETIC one-pixel GIF", "signature_provenance": "SYNTHETIC not_a_real_signature", "messages_streaming": "not_admitted"}
+      },
+      "assertions": ["messages_not_projected_through_chat", "signed_and_redacted_thinking_preserved", "explicit_tool_use_result_identity", "native_messages_budget_contract", "both_inline_and_remote_image_forms_no_fetch", "kimi_bearer_not_claude_oauth_normalization"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Synthetic signatures/images are syntax stimuli, not upstream acceptance. F14/F16 must qualify actual Messages hooks and observations.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.oauth-com.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Explicit kimi.com domain choice: planned bounded enrollment, selected private device binding and refresh fencing before native inference.",
+      "source_refs": ["src/mimic/providers/kimi/oauth.gleam", "src/mimic/providers/kimi/request.gleam", "docs/kimi/native.md"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "oauth", "oauth_domain": "kimi.com", "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "com-inference-after-persisted-refresh", "protocol": "responses", "operation": "responses", "mode": "buffered",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Content-Type", "application/json"]], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":\"SYNTHETIC com account\",\"stream\":false}\n"},
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"id\":\"synthetic-com-r\",\"object\":\"response\",\"model\":\"kimi-for-coding\",\"status\":\"completed\",\"output\":[]}\n"]}]
+        }],
+        "controls": {
+          "auth_endpoint_binding": "unknown_operator_qualification_required", "domain_pair": "kimi.com_not_kimi.ai",
+          "device_authorization_target": "/api/oauth/device_authorization", "token_target": "/api/oauth/token",
+          "auth_body_encoding": "form_utf8", "private_device_slot": "synthetic-b-device",
+          "device_steps": ["authorization_pending", "slow_down", "authorized", "cancelled", "expired", "access_denied"],
+          "min_poll_ms": 5000, "max_poll_ms": 900000, "refresh_lead_ms": 300000, "expires_at_ms": 200000,
+          "parallel_refresh_requests": 2, "refresh_barriers": ["refresh_started", "rotation_persisted", "inference_released"],
+          "unknown_rotation_outcome": "no_blind_retry", "invalid_grant": "credential_refresh_scope_not_request_quota",
+          "opposite_domain_grant": "reject_before_inference", "grant_values": "symbolic_slots_only_not_persisted_in_fixture"
+        }
+      },
+      "assertions": ["explicit_com_endpoint_pair_before_any_send", "device_id_private_selected_grant_not_provider_global", "poll_cancel_expiry_and_slow_down_bounded", "refresh_singleflight_and_generation_fence", "persist_rotation_before_inference", "no_rotating_grant_shared_between_targets", "ambiguous_refresh_never_retried"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "Auth steps are declarative, not approved token wire scripts. Positive integer expiry guard versus CPA numeric-float parsing requires an explicit decision; no rounding normalization.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.oauth-ai.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Explicit kimi.ai domain choice stays separate from kimi.com; independent managers and private grant/device metadata are required.",
+      "source_refs": ["src/mimic/providers/kimi/oauth.gleam", "src/mimic/providers/kimi/request.gleam", "docs/kimi/native.md"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "oauth", "oauth_domain": "kimi.ai", "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "ai-inference-after-persisted-refresh", "protocol": "responses", "operation": "responses", "mode": "buffered",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Content-Type", "application/json"]], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":\"SYNTHETIC ai account\",\"stream\":false}\n"},
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"id\":\"synthetic-ai-r\",\"object\":\"response\",\"model\":\"kimi-for-coding\",\"status\":\"completed\",\"output\":[]}\n"]}]
+        }],
+        "controls": {
+          "auth_endpoint_binding": "unknown_operator_qualification_required", "domain_pair": "kimi.ai_not_kimi.com",
+          "device_authorization_target": "/api/oauth/device_authorization", "token_target": "/api/oauth/token",
+          "auth_body_encoding": "form_utf8", "private_device_slot": "synthetic-b-device",
+          "device_steps": ["authorization_pending", "slow_down", "authorized", "cancelled", "expired", "access_denied"],
+          "min_poll_ms": 5000, "max_poll_ms": 900000, "refresh_lead_ms": 300000, "expires_at_ms": 200000,
+          "parallel_refresh_requests": 2, "refresh_barriers": ["refresh_started", "rotation_persisted", "inference_released"],
+          "unknown_rotation_outcome": "no_blind_retry", "invalid_grant": "credential_refresh_scope_not_request_quota",
+          "opposite_domain_grant": "reject_before_inference", "grant_values": "symbolic_slots_only_not_persisted_in_fixture"
+        }
+      },
+      "assertions": ["explicit_ai_endpoint_pair_before_any_send", "no_implicit_domain_fallback", "device_id_private_selected_grant_not_provider_global", "poll_cancel_expiry_and_slow_down_bounded", "refresh_singleflight_and_generation_fence", "persist_rotation_before_inference", "no_rotating_grant_shared_between_targets", "ambiguous_refresh_never_retried"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "No live domain verification or enrollment/refresh has occurred. Positive integer expiry versus CPA numeric-float parsing is not a match.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.tools-pre-io.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Reference-bearing schemas, missing reasoning in tool history and unmatched tool-result identities must fail before provider I/O, not be repaired.",
+      "source_refs": ["src/mimic/providers/kimi/transform.gleam", "src/mimic/providers/kimi/messages.gleam", "docs/kimi/native-v2.md"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "chat-schema-ref", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC schema\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"$defs\":{\"text\":{\"type\":\"string\"}},\"properties\":{\"text\":{\"$ref\":\"#/$defs/text\"}}}}}]}"}, "responses": []},
+          {"label": "chat-missing-reasoning", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":\"SYNTHETIC result\"}]}"}, "responses": []},
+          {"label": "messages-unmatched-tool-result", "protocol": "anthropic", "operation": "messages", "mode": "buffered", "request": {"method": "POST", "target": "/v1/messages", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"max_tokens\":512,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"synthetic-missing-call\",\"content\":\"SYNTHETIC result\"}]}]}"}, "responses": []}
+        ],
+        "controls": {"required_capabilities": [], "rejection_boundary": "before_transport_open", "fabricate_reasoning_or_infer_ids": "forbidden", "quota_failover": "not_asserted"}
+      },
+      "assertions": ["reference_schema_explicit_Unsupported_NotSent", "missing_reasoning_no_placeholder", "tool_result_no_inferred_call_id", "zero_upstream_requests_requires_actual_future_observation", "request_rejection_not_credential_or_quota_failure"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "CPA schema inlining/reasoning or ID repair versus explicit native rejection is a hardening difference, never normalization into a pass.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.controls-pre-io.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Lossy temperature removal, unsupported thinking level and conflicting controls are distinct negative stimuli.",
+      "source_refs": ["src/mimic/providers/kimi/transform.gleam", "src/mimic/providers/kimi/models.gleam", "src/mimic/providers/kimi/messages.gleam"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "temperature-would-be-dropped", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC temperature\"}],\"temperature\":0.2}"}, "responses": []},
+          {"label": "code-thinking-cannot-disable", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC effort\"}],\"reasoning_effort\":\"none\"}"}, "responses": []},
+          {"label": "conflicting-chat-controls", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC conflict\"}],\"reasoning_effort\":\"high\",\"thinking\":{\"type\":\"enabled\",\"effort\":\"low\"}}"}, "responses": []},
+          {"label": "messages-budget-not-below-output-limit", "protocol": "anthropic", "operation": "messages", "mode": "buffered", "request": {"method": "POST", "target": "/v1/messages", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"max_tokens\":128,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":128},\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC budget\"}]}"}, "responses": []}
+        ],
+        "controls": {"clamp_or_drop_client_intent": "forbidden", "native_policy_only": true, "generic_same_temperature_control": "kimi-generic.opaque-tools.final-v1"}
+      },
+      "assertions": ["no_temperature_loss", "model_specific_thinking_levels", "no_conflicting_control_precedence_guess", "messages_budget_native_not_chat_effort_projection", "all_negative_controls_pre_io"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "CPA dropping/clamping controls and native fail-closed behavior must receive a product decision, not an ignored-field normalization.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.media-pre-io.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Native unsupported media is checked in semantic content and tool-output positions despite an empty caller capability list.",
+      "source_refs": ["src/mimic/providers/kimi/transform.gleam", "src/mimic/providers/kimi/messages.gleam", "docs/kimi/native-v2.md"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "chat-user-audio", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_audio\",\"input_audio\":{\"data\":\"U1lOVEhFVElD\",\"format\":\"wav\"}}]}]}"}, "responses": []},
+          {"label": "chat-tool-video", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"assistant\",\"reasoning_content\":\"SYNTHETIC reasoning\",\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":[{\"type\":\"video_url\",\"video_url\":{\"url\":\"https://synthetic-media.invalid/video\"}}]}]}"}, "responses": []},
+          {"label": "responses-input-file", "protocol": "responses", "operation": "responses", "mode": "buffered", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_file\",\"file_id\":\"synthetic-file-1\"}]}]}"}, "responses": []},
+          {"label": "responses-tool-output-audio", "protocol": "responses", "operation": "responses", "mode": "buffered", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"synthetic-call-1\",\"name\":\"echo\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"synthetic-call-1\",\"output\":[{\"type\":\"input_audio\",\"input_audio\":{\"data\":\"U1lOVEhFVElD\",\"format\":\"wav\"}}]}]}"}, "responses": []},
+          {"label": "messages-tool-result-image", "protocol": "anthropic", "operation": "messages", "mode": "buffered", "request": {"method": "POST", "target": "/v1/messages", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"max_tokens\":512,\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"synthetic-call-1\",\"name\":\"echo\",\"input\":{}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"synthetic-call-1\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://synthetic-media.invalid/native.png\"}}]}]}]}"}, "responses": []}
+        ],
+        "controls": {"required_capabilities": [], "media_bytes_provenance": "SYNTHETIC text sentinel not a media recording", "media_fetch_or_decode": "forbidden", "rejection_boundary": "before_transport_open"}
+      },
+      "assertions": ["semantic_content_not_caller_capability_list", "same_policy_for_tool_output_content", "no_unsupported_media_as_text_success", "no_remote_media_fetch", "zero_upstream_requests_requires_actual_future_observation"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "No upstream media acceptance is inferred from a syntactic source guard. Differences must be retained, not silently discarded.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.state-pre-io.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Continuation, compact and unadmitted Messages streaming never become silent ordinary inference or a generic fallback.",
+      "source_refs": ["src/mimic/providers/kimi/request.gleam", "src/mimic/providers/kimi/transform.gleam", "src/mimic/gateway.gleam"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "responses-previous-id", "protocol": "responses", "operation": "responses", "mode": "buffered", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"previous_response_id\":\"synthetic-prior-r\",\"input\":\"SYNTHETIC continuation\"}"}, "responses": []},
+          {"label": "responses-compact", "protocol": "responses", "operation": "responses/compact", "mode": "buffered", "request": {"method": "POST", "target": "/v1/responses/compact", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":\"SYNTHETIC compact\"}"}, "responses": []},
+          {"label": "messages-streaming-unadmitted", "protocol": "anthropic", "operation": "messages", "mode": "streaming", "request": {"method": "POST", "target": "/v1/messages", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"stream\":true,\"max_tokens\":512,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC streaming\"}]}"}, "responses": []}
+        ],
+        "controls": {"delete_previous_id_or_project_compact": "forbidden", "messages_streaming_base": "denied", "future_f14_messages_hook": "unknown_not_inferred", "generic_fallback": "forbidden"}
+      },
+      "assertions": ["no_unqualified_continuation", "compact_not_inference", "messages_streaming_no_fallback", "source_base_vs_future_f14_hook_distinct"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "This records the inspected base's fail-closed boundary, not a claim that F14 cannot later admit a Messages streaming hook.", "normalization": []}
+    },
+    {
+      "id": "kimi-native.model-pre-io.final-v1", "row_id": "kimi-native", "primary_case_id": "kimi-native.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Exact native protocol model validation rejects non-string, absent or mismatched body models before native policy or I/O.",
+      "source_refs": ["src/mimic/providers/kimi/request.gleam", "src/mimic/providers/kimi/messages.gleam", "src/mimic/providers/kimi/transform.gleam"],
+      "stimulus": {
+        "registration": "kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/coding", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "chat-numeric-model", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":123,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC numeric model\"}]}"}, "responses": []},
+          {"label": "responses-mismatched-model", "protocol": "responses", "operation": "responses", "mode": "buffered", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"kimi-k2.8\",\"input\":\"SYNTHETIC mismatch\"}"}, "responses": []},
+          {"label": "messages-missing-model", "protocol": "anthropic", "operation": "messages", "mode": "buffered", "request": {"method": "POST", "target": "/v1/messages", "headers": [], "body": "{\"max_tokens\":512,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC missing model\"}]}"}, "responses": []}
+        ],
+        "controls": {"coerce_model_or_restore_before_validation": "forbidden", "failure_code_boundary": "protocol_and_ingress_owner_must_bind"}
+      },
+      "assertions": ["exact_native_protocol_model", "no_numeric_to_string_coercion", "no_caller_model_substitution", "request_failure_scope_not_credential_quarantine"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": null, "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Required no-send intent is explicit; exact failure code/status must be bound by F14/F16, not guessed from one helper.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.chat-wire.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Generic exact configured model remains unchanged even when named like a native alias; complete JSON values and ordered/cased duplicate headers survive preparation.",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "peer-reported:F15@8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/openai_compat_executor.go"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "generic-buffered-raw", "protocol": "chat", "operation": "chat/completions", "mode": "buffered",
+          "request": {
+            "method": "POST", "target": "/v1/chat/completions?synthetic=%2f&synthetic=%2F",
+            "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body": "{ \"model\":\"kimi-k2.7-code\", \"stream\":false, \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}], \"synthetic_extension\":{\"b\":2,\"a\":1,\"null\":null,\"bool\":true,\"integer\":12345678901234567890,\"decimal\":1.25,\"exponent\":1e-7,\"array\":[null,false,{\"model\":\"SYNTHETIC nested model\"}]} }\n"
+          },
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]], "body_chunks": ["{ \"id\":\"synthetic-generic-r\", \"object\":\"chat.completion\", \"model\":\"kimi-k2.7-code\", \"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC café\",\"synthetic_extension\":{\"b\":2,\"a\":1,\"null\":null,\"array\":[false,1.25]}},\"finish_reason\":\"stop\"}], \"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"total_tokens\":13}, \"synthetic_extension\":{\"model\":\"SYNTHETIC nested model\"} }\n"]}]
+        }],
+        "controls": {"observe_upstream_target": "/v1/chat/completions", "native_model_alias_device_thinking_transforms": "forbidden", "complete_ir.Value_preservation": "peer_reported_intent_not_locally_executed", "arbitrary_ingress_headers_forwarded": "not_assumed"}
+      },
+      "assertions": ["exact_generic_executor_identity", "exact_configured_model_no_native_alias", "complete_json_values_extensions_preserved", "raw_query_body_utf8_and_header_pairs", "no_native_device_header_or_coding_prefix"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "A generic endpoint is never native CPA execution. Reported complete-value preservation must be checked on qualified paired targets, not this data adapter.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.chat-sse.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Planned generic API-key Chat SSE follows the peer-reported F15 admitted coordinator checkpoint, not this checkout's buffered-only implementation.",
+      "source_refs": ["peer-reported:F15@8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936", "peer-reported:F15-provider-library@85f44ef07144a8a4433933b2f51f1972e4744039", "src/mimic/providers/kimi_compat/request.gleam"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "generic-chat-tool-fragments", "protocol": "chat", "operation": "chat/completions", "mode": "streaming",
+          "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]], "body": "{\"model\":\"kimi-k2.7-code\",\"stream\":true,\"stream_options\":{\"include_usage\":true,\"synthetic_extension\":{\"null\":null}},\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}}}],\"synthetic_extension\":{\"b\":2,\"a\":1}}\n"},
+          "responses": [{
+            "status": 200, "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": [
+              ": SYNTHETIC heartbeat\r\n\r\ndata: {\"id\":\"synthetic-generic-s\",\"object\":\"chat.completion.chunk\",\"model\":\"kimi-k2.7-code\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"SYNTHETIC café\",\"tool_calls\":[{\"index\":0,\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\"}}]},\"finish_reason\":null}],\"synthetic_extension\":{\"b\":2,\"a\":1}}\r\n\r\n",
+              "da",
+              "ta: {\"id\":\"synthetic-generic-s\",\"object\":\"chat.completion.chunk\",\"model\":\"kimi-k2.7-code\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"SYNTHETIC\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\r\n\r\ndata: {\"id\":\"synthetic-generic-s\",\"object\":\"chat.completion.chunk\",\"model\":\"kimi-k2.7-code\",\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"total_tokens\":13,\"synthetic_usage\":{\"null\":null,\"array\":[false,1.25]}}}\r\n\r\n",
+              "data: [DONE]\r\n\r\n"
+            ]
+          }]
+        }],
+        "controls": {"peer_checkpoint_import": "not_run", "inspected_base_generic_streaming": "denied", "native_transformations": "forbidden", "chunk_schedule": "synthetic_writes_not_tcp_read_boundaries", "terminal_variants": ["finish_without_done", "error_before_done", "disconnect", "cancel"]}
+      },
+      "assertions": ["peer_checkpoint_not_inspected_base_or_f32_admission", "raw_sse_crlf_comments_and_split_field", "tool_argument_fragments_and_provider_usage", "exact_generic_model_and_extensions", "terminal_done_required_no_fabricated_completion"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "F15 is peer-reported ACCEPTED for this generic route. It is not independently imported, a CPA differential/native/live claim or all F32 qualification.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.opaque-tools.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Generic schemas, arguments, result text and vendor extensions can contain media-named keys without triggering a recursive media scan or native policy.",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "docs/kimi/generic-media-v1.md", "peer-reported:F15@8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "opaque-names-are-not-media", "protocol": "chat", "operation": "chat/completions", "mode": "buffered",
+          "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{ \"model\":\"kimi-k2.7-code\", \"temperature\":0.2, \"reasoning_effort\":\"none\", \"thinking\":{\"type\":\"disabled\",\"synthetic_extension\":true}, \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC audio video file\"},{\"role\":\"assistant\",\"content\":null,\"reasoning_content\":\"SYNTHETIC preserved reasoning\",\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{ \\\"audio\\\" : true, \\\"model\\\" : \\\"SYNTHETIC user model\\\" }\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":\"{ \\\"type\\\":\\\"input_audio\\\", \\\"file\\\":\\\"SYNTHETIC text only\\\" }\"}], \"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"echo\",\"parameters\":{\"$defs\":{\"audio\":{\"type\":\"string\"}},\"properties\":{\"audio\":{\"$ref\":\"#/$defs/audio\"},\"video\":{\"type\":\"boolean\"},\"file\":{\"type\":\"string\"}}}}}], \"synthetic_extension\":{\"content\":{\"type\":\"input_audio\",\"audio\":true,\"video\":null,\"file\":\"SYNTHETIC\"}} }\n"},
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"id\":\"synthetic-opaque-r\",\"object\":\"chat.completion\",\"model\":\"kimi-k2.7-code\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC result\"},\"finish_reason\":\"stop\"}],\"synthetic_extension\":{\"audio\":true,\"video\":null,\"file\":\"SYNTHETIC\"}}\n"]}]
+        }],
+        "controls": {"recursive_media_key_scan": "forbidden", "native_schema_thinking_temperature_policy": "forbidden", "required_capabilities": [], "semantic_media_positions": "messages_content_and_message_audio_only"}
+      },
+      "assertions": ["opaque_schema_ref_and_media_named_properties_preserved", "raw_function_argument_and_result_strings", "generic_temperature_thinking_not_native_controls", "vendor_extensions_complete_value_preservation", "no_recursive_model_or_media_rewrite"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Semantic media rejection and opaque user-data preservation are complementary; preserving a field is not generic upstream acceptance evidence.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.images-no-fetch.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Generic inline and remote Chat image forms remain raw JSON strings, with no media fetch or native model entitlement inference.",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "docs/kimi/generic-media-v1.md"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "generic-inline-and-remote-image", "protocol": "chat", "operation": "chat/completions", "mode": "buffered",
+          "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC image\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\"}},{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://synthetic-media.invalid/generic.png\",\"detail\":\"low\"}}]}],\"synthetic_extension\":{\"model\":\"SYNTHETIC nested model\"}}\n"},
+          "responses": [{"status": 200, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"id\":\"synthetic-image-r\",\"object\":\"chat.completion\",\"model\":\"kimi-k2.7-code\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC image result\"},\"finish_reason\":\"stop\"}]}\n"]}]
+        }],
+        "controls": {"media_fetch_or_decode": "forbidden", "inline_media_provenance": "SYNTHETIC one-pixel GIF", "remote_host": "reserved_invalid_domain_not_an_endpoint", "native_model_image_entitlement": "not_inferred"}
+      },
+      "assertions": ["both_image_sources_raw_and_bounded", "remote_image_not_fetched", "generic_model_no_native_entitlement_inference", "image_detail_and_extensions_preserved"],
+      "expected": {"kind": "observation_required", "failure": null, "send_state": null, "required_upstream_requests": null, "scope": "none", "retry": "not_asserted", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Source-recognized image syntax is not measured media acceptance or permission to fetch the URL.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.media-pre-io.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Generic audio/video/file/unknown content and message audio reject before I/O across user/system/assistant/tool-result positions, even with required: [].",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "docs/kimi/generic-media-v1.md", "peer-reported:F15@8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "user-input-audio", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_audio\",\"input_audio\":{\"data\":\"U1lOVEhFVElD\",\"format\":\"wav\"}}]}]}"}, "responses": []},
+          {"label": "user-video", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"video_url\",\"video_url\":{\"url\":\"https://synthetic-media.invalid/video\"}}]}]}"}, "responses": []},
+          {"label": "user-file", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"file\",\"file\":{\"file_id\":\"synthetic-file-1\"}}]}]}"}, "responses": []},
+          {"label": "tool-input-audio", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":[{\"type\":\"input_audio\",\"input_audio\":{\"data\":\"U1lOVEhFVElD\",\"format\":\"wav\"}}]}]}"}, "responses": []},
+          {"label": "tool-video", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":[{\"type\":\"video_url\",\"video_url\":{\"url\":\"https://synthetic-media.invalid/video\"}}]}]}"}, "responses": []},
+          {"label": "tool-file", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"synthetic-call-1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"synthetic-call-1\",\"content\":[{\"type\":\"file\",\"file\":{\"file_id\":\"synthetic-file-1\"}}]}]}"}, "responses": []},
+          {"label": "system-unknown-part", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"system\",\"content\":[{\"type\":\"synthetic_unknown_media\"}]},{\"role\":\"user\",\"content\":\"SYNTHETIC\"}]}"}, "responses": []},
+          {"label": "assistant-message-audio", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"assistant\",\"content\":\"SYNTHETIC\",\"audio\":{\"id\":\"synthetic-audio-1\"}}]}"}, "responses": []}
+        ],
+        "controls": {"required_capabilities": [], "rejection_boundary": "before_transport_open", "media_fetch_or_decode": "forbidden", "media_bytes_provenance": "SYNTHETIC text sentinel not a media recording", "peer_reported_NotSent": "must_be_independently_bound_not_assumed"}
+      },
+      "assertions": ["nested_media_Unsupported_NotSent", "user_tool_system_assistant_same_semantic_policy", "message_audio_not_hidden_by_text_content", "caller_required_empty_does_not_bypass_guard", "zero_upstream_requests_requires_actual_future_observation"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "F15's reported NotSent semantics are a planned checkpoint. Neither fixture validation nor an old local rejection is CPA execution or an exact paired match.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.model-pre-io.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Generic exact protocol model validation has controlled absent/null/numeric/mismatch/escaped-duplicate cases; the loader keeps their raw negative bodies.",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "peer-reported:F15@8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "missing-model", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC\"}]}"}, "responses": []},
+          {"label": "null-model", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":null,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC\"}]}"}, "responses": []},
+          {"label": "numeric-model", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":123,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC\"}]}"}, "responses": []},
+          {"label": "mismatched-model", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-for-coding\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC\"}]}"}, "responses": []},
+          {"label": "escaped-duplicate-model", "protocol": "chat", "operation": "chat/completions", "mode": "buffered", "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"mo\\u0064el\":\"kimi-for-coding\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC\"}]}\n"}, "responses": []}
+        ],
+        "controls": {"model_coercion_aliasing_or_fallback": "forbidden", "provider_duplicate_key_guard": "required_before_dictionary_conversion", "required_capabilities": []}
+      },
+      "assertions": ["exact_generic_protocol_model", "absent_null_numeric_mismatch_rejected", "escaped_duplicate_model_rejected_by_provider_not_plan_loader", "no_native_alias_or_caller_model_repair"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Raw provider duplicate keys are intentional negative stimuli, unlike duplicate fixture-envelope keys. No provider validator executes here.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.protocols-pre-io.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "Responses and Messages must not borrow native Kimi registration merely because the generic configured model has the same name.",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "src/mimic/gateway.gleam", "peer-reported:F15@8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "api_key", "oauth_domain": null, "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {"label": "generic-responses-not-native", "protocol": "responses", "operation": "responses", "mode": "buffered", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"input\":\"SYNTHETIC generic unsupported Responses\"}"}, "responses": []},
+          {"label": "generic-messages-not-native", "protocol": "anthropic", "operation": "messages", "mode": "buffered", "request": {"method": "POST", "target": "/v1/messages", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"max_tokens\":512,\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC generic unsupported Messages\"}]}"}, "responses": []}
+        ],
+        "controls": {"registration_fixed_by_operator": "openai-compatible-kimi", "native_fallback_or_translation": "forbidden", "same_name_native_account_must_not_satisfy": true}
+      },
+      "assertions": ["generic_protocols_remain_chat_only", "explicit_pre_io_rejection_not_translation", "same_model_name_not_backend_authority", "peer_f15_chat_sse_not_all_protocols"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "The proposed operator-selected route binding is not admitted root configuration. F01/F16 must bind this boundary without changing historical tuples.", "normalization": []}
+    },
+    {
+      "id": "kimi-generic.oauth-pre-io.final-v1", "row_id": "kimi-generic", "primary_case_id": "kimi-generic.final-v1",
+      "provenance": "SYNTHETIC", "approval": "UNAPPROVED",
+      "description": "OAuth metadata is not supported by generic Kimi; domain labels and native device data must not enroll a generic API-key registration.",
+      "source_refs": ["src/mimic/providers/kimi_compat/request.gleam", "src/mimic/providers/kimi/oauth.gleam", "src/mimic/gateway/config.gleam"],
+      "stimulus": {
+        "registration": "openai-compatible-kimi", "auth_mode": "oauth", "oauth_domain": "kimi.com", "selected_model": "kimi-k2.7-code",
+        "base_path": "/v1", "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "label": "generic-oauth-not-registered", "protocol": "chat", "operation": "chat/completions", "mode": "buffered",
+          "request": {"method": "POST", "target": "/v1/chat/completions", "headers": [], "body": "{\"model\":\"kimi-k2.7-code\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC generic OAuth denial\"}]}\n"},
+          "responses": []
+        }],
+        "controls": {"opposite_domain_variant": "kimi.ai", "grant_values": "symbolic_slots_only", "login_refresh_device_header_or_native_fallback": "forbidden", "rejection_boundary": "before_transport_open"}
+      },
+      "assertions": ["generic_api_key_only", "neither_oauth_domain_enables_generic", "no_native_device_metadata_on_generic", "no_login_or_refresh_for_generic"],
+      "expected": {"kind": "pre_io_rejection_required", "failure": "Unsupported", "send_state": "NotSent", "required_upstream_requests": 0, "scope": "request", "retry": "forbidden", "quota_effect": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "This is a negative auth-boundary proposal, not a change to the historical generic API-key tuple or an OAuth login attempt.", "normalization": []}
+    }
+  ]
+}

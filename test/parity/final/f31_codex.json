@@ -1,0 +1,561 @@
+{
+  "schema": "mimic.f31-codex-fixtures/v1",
+  "slice": "F31",
+  "provider": "codex",
+  "provenance": "SYNTHETIC",
+  "approval": "pending_f01_mapping_and_qualification",
+  "mimic_base_revision": "ca86b531cea7e1a509ac8e6038604fe91819ac07",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "dependencies": {"F03": "not_admitted", "F11": "not_admitted", "F12": "not_admitted", "F13": "not_admitted"},
+  "comparison": {
+    "headers": "ordered_case_sensitive_pairs", "target": "exact_raw",
+    "body": "utf8_exact_text", "sse": "raw_chunks_and_frame_bytes_separately",
+    "websocket": "ordered_exact_text_frames_and_close",
+    "normalization": [], "differences": "decision_required_never_match"
+  },
+  "required_future_hashes": ["source", "driver", "fixture", "dependency", "executable", "shipment", "contract", "historical_manifest", "clients_lock"],
+  "synthetic_context": {
+    "auth_mode": "oauth", "credential_slots": ["synthetic-a", "synthetic-b"], "clock_ms": 1000,
+    "scope": {
+      "tenant": "synthetic-tenant-a", "provider": "synthetic-codex", "auth": "synthetic-oauth",
+      "credential": "synthetic-a", "account": "synthetic-account-a", "generation": "synthetic-generation-1",
+      "model": "synthetic-model", "origin": "synthetic-origin-a", "client": "synthetic-client-a",
+      "protocol": "synthetic-responses", "operation": "synthetic-responses", "connection_generation": "synthetic-socket-1"
+    },
+    "codec_limits": {"max_observation_bytes": 16777216, "max_events": 100000, "frame_bytes": 1048576, "items": 4096, "parts": 4096},
+    "policy_selection": "trusted_admitted_route_only", "route_admission": "not_admitted",
+    "baseline_http_continuation": "default_off_bounded"
+  },
+  "cases": [
+    {
+      "id": "codex-http.wire.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "Buffered HTTP ingress with complete standalone history, exact query spelling, duplicate/cased headers and raw UTF-8 JSON.",
+      "source_refs": ["src/mimic/providers/codex/request.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/codex_executor_execute.go"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "standalone", "control": "none",
+          "request": {
+            "method": "POST", "target": "/v1/responses?synthetic=%2f&synthetic=%2F",
+            "headers": [["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"], ["Thread-Id", "synthetic-client-a"], ["x-client-request-id", "synthetic-client-a"]],
+            "body": "{ \"model\":\"synthetic-model\", \"stream\":false, \"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC first\"},{\"role\":\"assistant\",\"content\":\"SYNTHETIC prior\"},{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}], \"synthetic_extension\":{\"b\":2,\"a\":1} }\n",
+            "text_frames": []
+          },
+          "responses": [{
+            "credential_slot": "synthetic-a", "status": 200,
+            "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": [
+              ": SYNTHETIC heartbeat\r\n\r\nevent: response.created\r\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-r-wire\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\r\n\r\n",
+              "event: response.completed\r\nda",
+              "ta: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-r-wire\",\"object\":\"response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":0,\"total_tokens\":7,\"input_tokens_details\":{\"cached_tokens\":2},\"synthetic_usage\":{\"b\":2,\"a\":1}},\"synthetic_extension\":{\"b\":2,\"a\":1}}}\r\n\r\n"
+            ], "text_frames": []
+          }]
+        }],
+        "parameters": {"ingress_mode": "buffered", "upstream_mode": "sse", "seed_binding": "unqualified_symbolic_only"}
+      },
+      "assertions": ["separate_ingress_and_actual_upstream_headers", "raw_query_whitespace_unicode_extension_order", "full_history_without_previous_id", "provider_usage_not_local_estimate", "sse_schedule_not_tcp_read_boundary_claim"],
+      "expected": {"scope": "none", "receipt": "not_asserted_default_off", "retry": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Raw policy transformations and generated identities must be observed separately; no arbitrary ingress-header forwarding or byte parity assumed.", "normalization": []}
+    },
+    {
+      "id": "codex-alias.direct-route.final-v1", "row_id": "codex-alias", "primary_case_id": "codex-alias.final-v1",
+      "description": "Direct backend alias remains authenticated native intent, not a shortcut around credential or client-session isolation.",
+      "source_refs": ["src/mimic/providers/codex/routes.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/api/server_routes.go"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "direct-alias", "control": "none",
+          "request": {"method": "POST", "target": "/backend-api/codex/responses", "headers": [["Authorization", "Bearer synthetic-client"], ["Thread-Id", "synthetic-client-a"]], "body": "{ \"model\":\"synthetic-model\", \"input\":\"SYNTHETIC alias\", \"stream\":false }\n", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]], "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-alias-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-alias-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"], "text_frames": []}]
+        }],
+        "parameters": {"ingress_mode": "buffered", "native_intent": "direct_alias", "authentication": "same_gateway_principal_required", "unauthenticated_alias_probe": "must_reject_before_provider", "no_chat_completions_native_inference": true}
+      },
+      "assertions": ["alias_authentication_not_bypassed", "same_selected_private_credential", "direct_alias_native_intent_only", "raw_alias_target_observed"],
+      "expected": {"scope": "none", "receipt": "not_asserted", "retry": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "This is an additive native alias probe, not executed route registration or catalog/client qualification.", "normalization": []}
+    },
+    {
+      "id": "codex-http.history-replay.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "Three HTTP turns retain encrypted reasoning and completed tool output; server receipts replay all prior input/output before deleting the id.",
+      "source_refs": ["docs/codex-http-continuation.md", "src/mimic/providers/codex/request.gleam", "src/mimic/providers/codex/http.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/codex_executor_stream.go"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [
+          {
+            "label": "initial-tool", "control": "none",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Content-Type", "application/json"], ["Thread-Id", "synthetic-client-a"], ["x-client-request-id", "synthetic-client-a"]],
+              "body": "{\"model\":\"synthetic-model\",\"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC use echo\"}],\"reasoning\":{\"effort\":\"low\"},\"include\":[\"reasoning.encrypted_content\"],\"tools\":[{\"type\":\"function\",\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}}]}",
+              "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+              "body_chunks": [
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-r-1\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"synthetic-reason-1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"synthetic-opaque-reasoning\"}}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-reason-1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"synthetic-opaque-reasoning\"}}\n\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"synthetic-tool-item-1\",\"type\":\"function_call\",\"call_id\":\"synthetic-call-1\",\"name\":\"echo\",\"arguments\":\"\"}}\n\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"synthetic-tool-item-1\",\"output_index\":1,\"delta\":\"{\\\"text\\\":\\\"SYNTHETIC\\\"}\"}\n\n",
+                "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"synthetic-tool-item-1\",\"output_index\":1,\"arguments\":\"{\\\"text\\\":\\\"SYNTHETIC\\\"}\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"synthetic-tool-item-1\",\"type\":\"function_call\",\"call_id\":\"synthetic-call-1\",\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\\\"SYNTHETIC\\\"}\"}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-r-1\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-reason-1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"synthetic-opaque-reasoning\"},{\"id\":\"synthetic-tool-item-1\",\"type\":\"function_call\",\"call_id\":\"synthetic-call-1\",\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\\\"SYNTHETIC\\\"}\"}],\"usage\":{\"input_tokens\":9,\"output_tokens\":4,\"total_tokens\":13,\"output_tokens_details\":{\"reasoning_tokens\":2}}}}\n\n"
+              ], "text_frames": []}]
+          },
+          {
+            "label": "tool-result", "control": "use_only_server_completed_receipt",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"], ["x-client-request-id", "synthetic-client-a"]],
+              "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-r-1\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"synthetic-call-1\",\"output\":\"SYNTHETIC result\"}],\"stream\":true}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+              "body_chunks": [
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-r-2\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-r-2\",\"object\":\"response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":15,\"output_tokens\":0,\"total_tokens\":15}}}\n\n"
+              ], "text_frames": []}]
+          },
+          {
+            "label": "third-turn", "control": "use_only_server_completed_receipt",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"], ["x-client-request-id", "synthetic-client-a"]],
+              "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-r-2\",\"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC third\"}]}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+              "body_chunks": [
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-r-3\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-r-3\",\"object\":\"response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":18,\"output_tokens\":0,\"total_tokens\":18}}}\n\n"
+              ], "text_frames": []}]
+          }
+        ],
+        "parameters": {"history_authority": "server_completed_receipt_only", "third_turn_input_order": ["initial_input", "response_1.output", "tool_result_input", "response_2.output", "third_input"], "cpa_http_behavior": "delete_previous_response_id_without_full_history_replay", "catalog_reasoning_effort_binding": "not_qualified"}
+      },
+      "assertions": ["all_prior_input_plus_completed_output_not_last_turn_only", "opaque_reasoning_no_fabricated_signature", "tool_kind_and_call_id_pairing", "server_receipt_not_caller_history_claim", "delete_id_only_after_safe_replay", "buffered_and_streamed_terminal_receipt_rules"],
+      "expected": {"scope": "continuation", "receipt": "completed_clean_eof_scope_bound_only", "retry": "never_across_account_for_continuation", "mimic_http": "safe_full_history_replay_then_delete_id", "cpa_http": "delete_id_without_replay"},
+      "difference": {"status": "decision_required", "note": "MIMIC safe full-history replay versus CPA previous_response_id deletion is intentional nonidentical behavior, never a normalized match.", "normalization": []}
+    },
+    {
+      "id": "codex-http.missing-receipt.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "An incremental id, caller full-history Boolean, complete caller items or opaque item_reference never supplies a server receipt.",
+      "source_refs": ["src/mimic/providers/codex/http.gleam", "src/mimic/providers/codex/request.gleam"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [
+          {"label": "incremental-only", "control": "fresh_empty_cache",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-missing\",\"input\":\"SYNTHETIC delta\"}", "text_frames": []}, "responses": []},
+          {"label": "caller-claims-history", "control": "fresh_empty_cache",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-missing\",\"full_history\":true,\"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC complete-looking history\"}]}", "text_frames": []}, "responses": []},
+          {"label": "opaque-item-reference", "control": "fresh_empty_cache",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"input\":[{\"type\":\"item_reference\",\"id\":\"synthetic-item\"}]}", "text_frames": []}, "responses": []}
+        ],
+        "parameters": {"probe_isolation": "fresh_cache_each_turn", "expected_upstream_requests": 0, "caller_history_never_seeded_into_cache": true}
+      },
+      "assertions": ["missing_receipt_rejects_before_send", "caller_flags_not_authority", "http_item_reference_explicitly_unsupported", "no_account_pool_walk"],
+      "expected": {"scope": "request", "failure": "Unsupported", "send_state": "NotSent", "receipt": "none", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "CPA ordinary HTTP strips the id; MIMIC fails closed without a matching server receipt. Complete standalone requests must omit the id.", "normalization": []}
+    },
+    {
+      "id": "codex-isolation.scope-bindings.final-v1", "row_id": "codex-isolation", "primary_case_id": "codex-isolation.final-v1",
+      "description": "Selected authoritative scope and revision, not token values, caller account headers or cache/session hints, bind HTTP receipts.",
+      "source_refs": ["src/mimic/providers/codex/http.gleam", "docs/codex-http-continuation.md", "src/mimic/providers/codex/routes.gleam"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [{
+          "label": "cross-scope-followup", "control": "proposed_server_seed_then_one_scope_change_per_probe",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"], ["x-client-request-id", "synthetic-client-a"], ["Chatgpt-Account-Id", "synthetic-caller-spoof"], ["Session-Id", "synthetic-shared-cache-hint"]],
+            "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-scope-r\",\"prompt_cache_key\":\"synthetic-caller-cache\",\"input\":\"SYNTHETIC followup\"}", "text_frames": []},
+          "responses": []
+        }],
+        "parameters": {
+          "proposed_server_seed": {"response_id": "synthetic-scope-r", "history_json": "[{\"role\":\"user\",\"content\":\"SYNTHETIC prior\"}]", "authority": "future_qualified_completed_receipt_only"},
+          "scope_changes": [
+            {"tenant": "synthetic-tenant-b"}, {"provider": "synthetic-other-provider"}, {"auth": "synthetic-other-auth"},
+            {"credential": "synthetic-b"}, {"account": "synthetic-account-b"}, {"generation": "synthetic-generation-2"},
+            {"model": "synthetic-model-b"}, {"origin": "synthetic-origin-b"}, {"client": "synthetic-client-b"},
+            {"protocol": "synthetic-websocket"}, {"operation": "synthetic-responses-lite"}
+          ],
+          "thread_header_probes": [[["Thread-Id", "synthetic-client-a"], ["thread-id", "synthetic-client-a"]], [["Thread-Id", "synthetic-client-a"], ["x-client-request-id", "synthetic-client-b"]]],
+          "same_value_reenrollment": "new_authoritative_revision_invalidates_old_receipt",
+          "expected_upstream_requests_per_denial": 0, "two_tenants_same_response_id": "no_cross_lookup_or_publication"
+        }
+      },
+      "assertions": ["tenant_provider_auth_account_generation_model_origin_client_protocol_operation", "authoritative_revision_not_token_hash", "locate_then_selected_scope_lookup", "caller_pin_conflict_rejected", "duplicate_conflicting_thread_hints_rejected", "same_value_rotation_revocation_invalidation", "no_private_scope_or_history_logs"],
+      "expected": {"scope": "continuation", "failure": "Unsupported", "send_state": "NotSent", "receipt": "no_cross_scope_reuse", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "Safety denials and generated scoped identity differ from unqualified CPA behavior; no scope or session normalization.", "normalization": []}
+    },
+    {
+      "id": "codex-http.restart.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "Nonpersistent HTTP cache restart rejects incremental state; a new complete standalone history can be proposed without resurrecting receipts.",
+      "source_refs": ["docs/codex-http-continuation.md", "src/mimic/providers/codex/session.gleam"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [
+          {"label": "before-restart", "control": "none",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC prior\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+              "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-restart-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-restart-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"], "text_frames": []}]},
+          {"label": "incremental-after-restart", "control": "proposed_restart_fresh_cache_no_persisted_receipts",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-restart-r\",\"input\":\"SYNTHETIC delta\"}", "text_frames": []}, "responses": []},
+          {"label": "standalone-after-restart", "control": "complete_standalone_no_id",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC prior\"},{\"role\":\"user\",\"content\":\"SYNTHETIC delta\"}]}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+              "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-new-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-new-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"], "text_frames": []}]}
+        ],
+        "parameters": {"restart_is_proposed_control_not_process_execution": true, "incremental_after_restart_upstream_requests": 0, "clear_scope_requires_cancel_drain_publishers": true, "whole_cache_shutdown_fences_publication": true}
+      },
+      "assertions": ["cache_nonpersistent", "restart_missing_receipt_not_restored_from_client", "standalone_recovery_without_previous_id", "shutdown_publication_fence"],
+      "expected": {"scope": "continuation", "receipt": "nonpersistent", "retry": "never_incremental", "restart_incremental": "Unsupported/NotSent"},
+      "difference": {"status": "decision_required", "note": "Restart safety is not CPA id deletion parity; standalone recovery is a distinct request, not automatic replay.", "normalization": []}
+    },
+    {
+      "id": "codex-lifecycle.cancel.final-v1", "row_id": "codex-lifecycle", "primary_case_id": "codex-lifecycle.final-v1",
+      "description": "Cancellation after visible delta and late completed delivery cannot create a successful continuation receipt.",
+      "source_refs": ["src/mimic/providers/codex/http.gleam", "src/mimic/providers/codex/session.gleam"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [{
+          "label": "cancel-after-delta", "control": "proposed_downstream_cancel_after_first_delta_then_late_terminal",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]],
+            "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC cancel\",\"stream\":true}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": [
+              "data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-cancel-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+              "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"synthetic-msg\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"item_id\":\"synthetic-msg\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\",\"annotations\":[]}}\n\n",
+              "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-msg\",\"output_index\":0,\"content_index\":0,\"delta\":\"SYNTHETIC visible\"}\n\n",
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-cancel-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-msg\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC visible\",\"annotations\":[]}]}]}}\n\n"
+            ], "text_frames": []}]
+        }],
+        "parameters": {"idempotent_cancel": true, "late_terminal_is_adversarial": true, "followup_id": "synthetic-cancel-r", "expected_followup_upstream_requests": 0}
+      },
+      "assertions": ["actual_handle_cancel_required", "no_receipt_after_downstream_cancel", "no_retry_after_visible_output_or_cancel", "late_terminal_cannot_publish"],
+      "expected": {"scope": "transport", "failure": "Cancelled", "send_state": "Started", "receipt": "none", "retry": "never"},
+      "difference": {"status": "observation_required", "note": "Cancellation/late-event timing and terminal fidelity require actual admitted drivers, not this script.", "normalization": []}
+    },
+    {
+      "id": "codex-compact.separate-operation.final-v1", "row_id": "codex-compact", "primary_case_id": "codex-compact.final-v1",
+      "description": "Compact is a separate HTTP operation and JSON document, never Lite, SSE, WS or a fabricated reusable reasoning receipt.",
+      "source_refs": ["src/mimic/providers/codex/request.gleam", "src/mimic/providers/codex/routes.gleam"],
+      "stimulus": {
+        "path_kind": "compact", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "compact", "control": "none",
+          "request": {"method": "POST", "target": "/v1/responses/compact", "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body": "{ \"model\":\"synthetic-model\", \"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC compact\"},{\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"synthetic-opaque-prior\"}], \"stream\":false }\n", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": ["{ \"id\":\"synthetic-compact-r\", \"object\":\"response.compaction\", \"output\":[{\"type\":\"compaction\",\"encrypted_content\":\"synthetic-opaque-compaction\"}], \"usage\":{\"input_tokens\":20,\"output_tokens\":3,\"total_tokens\":23}, \"synthetic_extension\":{\"b\":2,\"a\":1} }\n"], "text_frames": []}]
+        }],
+        "parameters": {"upstream_target": "/backend-api/codex/responses/compact", "lite_header_on_compact": "explicit_rejection_probe_pending", "ws_compact": "unsupported", "http_continuation_wrapper_does_not_accept_compact": true}
+      },
+      "assertions": ["compact_separate_endpoint_and_operation", "json_document_not_sse", "opaque_compaction_preserved_no_signature_invention", "provider_usage_and_extensions", "no_lite_or_ws_coercion"],
+      "expected": {"scope": "none", "receipt": "not_asserted_for_compact", "retry": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Compaction scope, exact output document and usage require independent qualification; opaque data is not hydrated.", "normalization": []}
+    },
+    {
+      "id": "codex-sse.lite-header.final-v1", "row_id": "codex-sse", "primary_case_id": "codex-sse.final-v1",
+      "description": "Explicit caller Lite intent changes request policy but does not authorize Reconstruct; full native tool declarations and usage remain raw.",
+      "source_refs": ["src/mimic/providers/codex/lite.gleam", "docs/codex-http-continuation.md"],
+      "stimulus": {
+        "path_kind": "lite", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "header-lite", "control": "none",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "true"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC lite\",\"tools\":[{\"type\":\"custom\",\"name\":\"synthetic_custom\",\"format\":{\"type\":\"text\"}}],\"additional_tools\":[{\"type\":\"namespace\",\"name\":\"synthetic_ns\",\"tools\":[{\"type\":\"function\",\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}]}],\"parallel_tool_calls\":true,\"include\":[\"reasoning.encrypted_content\"]}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": [
+              "data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-lite-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+              "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"synthetic-custom-item\",\"type\":\"custom_tool_call\",\"call_id\":\"synthetic-custom-call\",\"name\":\"synthetic_custom\",\"input\":\"\"}}\n\ndata: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"synthetic-custom-item\",\"output_index\":0,\"delta\":\"SYNTHETIC native input\"}\n\n",
+              "data: {\"type\":\"response.custom_tool_call_input.done\",\"item_id\":\"synthetic-custom-item\",\"output_index\":0,\"input\":\"SYNTHETIC native input\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-custom-item\",\"type\":\"custom_tool_call\",\"call_id\":\"synthetic-custom-call\",\"name\":\"synthetic_custom\",\"input\":\"SYNTHETIC native input\"}}\n\n",
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-lite-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-custom-item\",\"type\":\"custom_tool_call\",\"call_id\":\"synthetic-custom-call\",\"name\":\"synthetic_custom\",\"input\":\"SYNTHETIC native input\"}],\"usage\":{\"input_tokens\":4,\"output_tokens\":2,\"total_tokens\":6,\"synthetic_detail\":17},\"future\":{\"synthetic\":true}}}\n\n"
+            ], "text_frames": []}]
+        }],
+        "parameters": {"upstream_target": "/backend-api/codex/responses", "expected_parallel_tool_calls": false, "automatic_image_tool_injection": "none", "caller_lite_never_selects_codec_policy": true, "custom_tool_result_probe": "{\"model\":\"synthetic-model\",\"input\":[{\"type\":\"custom_tool_call_output\",\"call_id\":\"synthetic-custom-call\",\"output\":\"SYNTHETIC result\"}]}"}
+      },
+      "assertions": ["lite_same_responses_route_not_compact", "native_function_custom_namespace_declarations", "parallel_false_even_without_tools", "preserve_native_usage_extensions", "custom_result_kind_and_id_not_function_result", "caller_lite_not_reconstruction_authority"],
+      "expected": {"scope": "none", "codec_policy": "Strict", "receipt": "not_asserted_default_off", "retry": "not_asserted"},
+      "difference": {"status": "observation_required", "note": "Full-document Lite is only a proposed script; neither native availability nor sparse/native root admission is established.", "normalization": []}
+    },
+    {
+      "id": "codex-sse.lite-markers.final-v1", "row_id": "codex-sse", "primary_case_id": "codex-sse.final-v1",
+      "description": "Metadata Lite true, explicit normal false and malformed/duplicate native header markers stay distinct; all use Strict by default.",
+      "source_refs": ["src/mimic/providers/codex/lite.gleam", "src/mimic/providers/codex/routes.gleam"],
+      "stimulus": {
+        "path_kind": "lite", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [
+          {"label": "metadata-true", "control": "fresh_independent_probe",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["Content-Type", "application/json"]], "body": "{\"model\":\"synthetic-model\",\"input\":[],\"client_metadata\":{\"ws_request_header_x_openai_internal_codex_responses_lite\":\"true\"}}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]], "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-marker-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-marker-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"], "text_frames": []}]},
+          {"label": "explicit-normal", "control": "fresh_independent_probe",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "false"]], "body": "{\"model\":\"synthetic-model\",\"input\":[],\"client_metadata\":{\"ws_request_header_x_openai_internal_codex_responses_lite\":false}}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]], "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-normal-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-normal-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"], "text_frames": []}]},
+          {"label": "malformed-marker", "control": "fresh_independent_probe",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "maybe"]], "body": "{\"model\":\"synthetic-model\",\"input\":[]}", "text_frames": []}, "responses": []},
+          {"label": "duplicate-marker", "control": "fresh_independent_probe",
+            "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "true"], ["x-openai-internal-codex-responses-lite", "true"]], "body": "{\"model\":\"synthetic-model\",\"input\":[]}", "text_frames": []}, "responses": []}
+        ],
+        "parameters": {"normal_not_inferred_from_catalog_use_responses_lite": true, "marker_probe_order": ["metadata_lite", "normal", "Unsupported/NotSent", "Unsupported/NotSent"], "codec_policy_each_probe": "Strict"}
+      },
+      "assertions": ["header_metadata_boolean_string_true", "explicit_normal_not_catalog_inferred", "malformed_duplicate_markers_reject_not_false_fallback", "lite_not_codec_authority"],
+      "expected": {"scope": "request_for_invalid_markers_only", "receipt": "none_for_invalid_markers", "retry": "never_for_invalid_markers"},
+      "difference": {"status": "decision_required", "note": "MIMIC malformed/duplicate marker rejection versus CPA permissive false fallback is not normalized parity.", "normalization": []}
+    },
+    {
+      "id": "codex-sse.streaming-bootstrap.final-v1", "row_id": "codex-sse", "primary_case_id": "codex-sse.final-v1",
+      "description": "Stream:true with StreamBootstrapBuffering on/off is streaming bootstrap, explicitly not nonstreaming buffered HTTP coverage.",
+      "source_refs": ["CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/codex_native_fidelity_test.go", "F11:partial_compiled_packet_admission_withheld"],
+      "stimulus": {
+        "path_kind": "lite", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "streaming-bootstrap-not-buffered", "control": "proposed_separate_bootstrap_config_probes",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "true"]], "body": "{\"model\":\"synthetic-model\",\"input\":[],\"stream\":true}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": ["data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-sparse-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC nonempty\",\"annotations\":[]}]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-sparse-r\",\"status\":\"completed\",\"output\":[],\"future\":{\"ok\":true},\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"], "text_frames": []}]
+        }],
+        "parameters": {"ingress_mode": "streaming", "stream_bootstrap_buffering_values": [false, true], "bootstrap_setting_is_source_driver_config_not_caller_codec_authority": true, "does_not_cover_nonstreaming_buffered_http": true, "source_test_transport_axis": "upstream_http_or_ws", "downstream_route": "/v1/responses_assembled_projection_unqualified", "coordinator_f11_correction": "fullpath_hold_executor_native_fidelity_does_not_establish_assembled_output"}
+      },
+      "assertions": ["streaming_bootstrap_distinct_from_nonstreaming_buffered_http", "both_bootstrap_modes_keep_sparse_blocker", "caller_lite_not_codec_authority", "no_native_exact_terminal_closure"],
+      "expected": {"scope": "response_protocol", "failure": "InvalidResponse", "send_state": "Started", "receipt": "none", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "CPA streaming bootstrap switches do not establish buffered HTTP or native Lite closure; missing lifecycle and contradictory output remain blocked.", "normalization": []}
+    },
+    {
+      "id": "codex-http.nonstream-hydration.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "Pinned nonstream Execute unconditionally patches completed output from collected done items; executor-level streaming empty-output preservation establishes neither downstream streaming nor nonstream projection.",
+      "source_refs": ["CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/codex_executor_execute.go#L160-L199", "F01:codex-nonstream-hydration_pending_freeze"],
+      "stimulus": {
+        "path_kind": "lite", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "nonstream-native-lite-counterevidence", "control": "none",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "true"]], "body": "{\"model\":\"synthetic-model\",\"input\":[],\"stream\":false}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": ["data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-sparse-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC nonempty\",\"annotations\":[]}]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-sparse-r\",\"status\":\"completed\",\"output\":[],\"future\":{\"ok\":true},\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"], "text_frames": []}]
+        }],
+        "parameters": {"ingress_mode": "nonstreaming_buffered", "pinned_execute": "collect_done_then_unconditional_patchCodexCompletedOutput_before_TranslateNonStream_no_preserveNativeOutput_guard", "cpa_output_expectation": "source_intent_hydrated_done_items_not_measured_here", "supplied_terminal_only_extension": "unapproved_disabled_not_denominator_not_parity", "provider_owned_speculative_hydration": "forbidden", "f01_source_assessment": "codex-nonstream-hydration_pending_freeze"}
+      },
+      "assertions": ["nonstream_execute_not_native_streaming_preservation", "source_hydration_counterevidence_not_runtime_result", "no_supplied_terminal_only_parity_or_denominator_claim", "no_successful_receipt_or_sparse_root_admission"],
+      "expected": {"scope": "response_protocol", "failure": "InvalidResponse", "send_state": "Started", "receipt": "none", "retry": "never", "cpa_nonstream_source": "unconditional_completed_output_patch"},
+      "difference": {"status": "decision_required", "note": "CPA nonstream hydration versus blocked MIMIC sparse handling is not native streaming parity. Supplied-terminal-only nonstream is a disabled unapproved product extension, not a match.", "normalization": []}
+    },
+    {
+      "id": "codex-sse.sparse-strict.final-v1", "row_id": "codex-sse", "primary_case_id": "codex-sse.final-v1",
+      "description": "Synthetic analogue of the CPA Lite sample: missing created/added followed by nonempty done and contradictory empty terminal without object.",
+      "source_refs": ["test/codex_http_fixtures/cpa-lite-native-terminal.json", "docs/codex-http-continuation.md"],
+      "stimulus": {
+        "path_kind": "lite", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "contradictory-sparse", "control": "none",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "true"]], "body": "{\"model\":\"synthetic-model\",\"input\":[],\"stream\":true}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": ["data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-sparse-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC nonempty\",\"annotations\":[]}]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-sparse-r\",\"status\":\"completed\",\"output\":[],\"future\":{\"ok\":true},\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"], "text_frames": []}]
+        }],
+        "parameters": {"sample_is_synthetic_analogue_not_new_cpa_capture": true, "missing_events": ["response.created", "response.output_item.added"], "contradiction": "done_item_nonempty_terminal_output_empty", "provider_owned_hydration": "forbidden"}
+      },
+      "assertions": ["strict_rejects_missing_lifecycle", "contradictory_terminal_never_hydrated", "no_successful_receipt", "no_native_sparse_root_admission"],
+      "expected": {"scope": "response_protocol", "failure": "InvalidResponse", "send_state": "Started", "receipt": "none", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "Historical executor output preserves a sparse empty terminal, not assembled CPA native Lite output: downstream responsesSSEFramer reportedly hydrates completion.output. Full-path qualification and MIMIC strict handling remain blocked; no normalized or backfilled match.", "normalization": []}
+    },
+    {
+      "id": "codex-sse.sparse-reconstruct.final-v1", "row_id": "codex-sse", "primary_case_id": "codex-sse.final-v1",
+      "description": "Proposed trusted-route Reconstruct policy cannot reconcile the same contradictory sparse terminal; no speculative hydration.",
+      "source_refs": ["F11:partial_compiled_packet_admission_withheld", "test/codex_http_fixtures/cpa-lite-native-terminal.json"],
+      "stimulus": {
+        "path_kind": "lite", "transport": "http/1.1", "codec_policy": "Reconstruct", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "contradictory-sparse", "control": "proposed_trusted_route_policy_not_caller_lite",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["X-OpenAI-Internal-Codex-Responses-Lite", "true"]], "body": "{\"model\":\"synthetic-model\",\"input\":[],\"stream\":true}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": ["data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-sparse-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC nonempty\",\"annotations\":[]}]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-sparse-r\",\"status\":\"completed\",\"output\":[],\"future\":{\"ok\":true},\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"], "text_frames": []}]
+        }],
+        "parameters": {"f11_status": "admission_withheld_fetched_not_merged_partial", "route_policy_approval": "pending", "missing_events": ["response.created", "response.output_item.added"], "contradiction": "done_item_nonempty_terminal_output_empty", "provider_owned_hydration": "forbidden", "transparent_raw_native_policy": "hold_fullpath_review_no_gateway_projection_approval"}
+      },
+      "assertions": ["reconstruct_not_permissive_contradiction_repair", "policy_only_from_trusted_admitted_route", "no_successful_receipt", "no_native_sparse_root_admission"],
+      "expected": {"scope": "response_protocol", "failure": "InvalidResponse", "send_state": "Started", "receipt": "none", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "A partial compiled F11 packet is not evidence that CPA sparse Lite becomes supported; contradictory output remains blocked even under proposed Reconstruct.", "normalization": []}
+    },
+    {
+      "id": "codex-ws.same-socket-history.final-v1", "row_id": "codex-ws", "primary_case_id": "codex-ws.final-v1",
+      "description": "WS warmup, completed function call, paired incremental result retaining previous_response_id, then standalone create on one physical socket.",
+      "source_refs": ["src/mimic/providers/codex/request.gleam", "src/mimic/providers/codex/session.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/codex_websockets_duplex.go"],
+      "stimulus": {
+        "path_kind": "websocket", "transport": "websocket", "codec_policy": "Strict", "continuation_mode": "same_socket_receipt",
+        "turns": [{
+          "label": "one-socket-ordered-exchanges", "control": "proposed_wait_for_each_completed_before_next_create",
+          "request": {"method": "GET", "target": "/v1/responses?synthetic=%2f&synthetic=%2F", "headers": [["Upgrade", "websocket"], ["Connection", "Upgrade"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"], ["Thread-Id", "synthetic-client-a"]],
+            "body": "", "text_frames": [
+              "{ \"type\":\"response.create\", \"model\":\"synthetic-model\", \"generate\":false, \"input\":[] }\n",
+              "{\"type\":\"response.create\",\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC tool\",\"tools\":[{\"type\":\"function\",\"name\":\"echo\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}]}",
+              "{\"type\":\"response.create\",\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-ws-1\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"synthetic-ws-call\",\"output\":\"SYNTHETIC result\"}]}",
+              "{\"type\":\"response.create\",\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC standalone\"}"
+            ]},
+          "responses": [{"credential_slot": "synthetic-a", "status": 101, "headers": [["Upgrade", "websocket"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": [], "text_frames": [
+              "{\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-warmup\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}",
+              "{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-warmup\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}",
+              "{\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-ws-1\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}",
+              "{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"synthetic-ws-item\",\"type\":\"function_call\",\"call_id\":\"synthetic-ws-call\",\"name\":\"echo\",\"arguments\":\"\"}}",
+              "{\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"synthetic-ws-item\",\"output_index\":0,\"delta\":\"{}\"}",
+              "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"synthetic-ws-item\",\"output_index\":0,\"arguments\":\"{}\"}",
+              "{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"synthetic-ws-item\",\"type\":\"function_call\",\"call_id\":\"synthetic-ws-call\",\"name\":\"echo\",\"arguments\":\"{}\"}}",
+              "{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-ws-1\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-ws-item\",\"type\":\"function_call\",\"call_id\":\"synthetic-ws-call\",\"name\":\"echo\",\"arguments\":\"{}\"}],\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}",
+              "{\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-ws-2\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}",
+              "{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-ws-2\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}",
+              "{\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-ws-3\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}",
+              "{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-ws-3\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}"
+            ]}]
+        }],
+        "parameters": {"physical_socket": "synthetic-socket-1", "exchange_response_frame_counts": [2, 6, 2, 2], "normal_close": {"code": 1000, "reason": "SYNTHETIC done"}, "http_fallback": "forbidden", "reconnect": "not_requested", "client_frame_boundaries_not_sse_chunks": true}
+      },
+      "assertions": ["same_credential_and_physical_generation", "warmup_generate_false_type_checked", "ws_previous_id_retained_not_http_deleted", "tool_kind_and_call_id_pairing", "standalone_never_inherits_previous_id", "exact_text_frame_order_usage_and_close"],
+      "expected": {"scope": "connection", "receipt": "completed_same_generation_only", "retry": "never_across_socket_or_account"},
+      "difference": {"status": "observation_required", "note": "Same-socket WS intent is distinct from HTTP history replay; actual protocol/duplex driver and frame/control bindings remain unqualified.", "normalization": []}
+    },
+    {
+      "id": "codex-ws.socket-replacement.final-v1", "row_id": "codex-ws", "primary_case_id": "codex-ws.final-v1",
+      "description": "Old WS receipt cannot survive physical socket replacement, credential failover, an HTTP receipt or restart.",
+      "source_refs": ["src/mimic/providers/codex/session.gleam", "docs/codex-parity.md"],
+      "stimulus": {
+        "path_kind": "websocket", "transport": "websocket", "codec_policy": "Strict", "continuation_mode": "same_socket_receipt",
+        "turns": [{
+          "label": "stale-generation-create", "control": "proposed_seed_completed_old_socket_then_replace",
+          "request": {"method": "GET", "target": "/v1/responses", "headers": [["Upgrade", "websocket"], ["Thread-Id", "synthetic-client-a"]], "body": "",
+            "text_frames": ["{\"type\":\"response.create\",\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-old-ws-r\",\"input\":\"SYNTHETIC delta\"}"]},
+          "responses": []
+        }],
+        "parameters": {"old_socket": "synthetic-socket-1", "new_socket": "synthetic-socket-2", "old_response_id": "synthetic-old-ws-r", "denial_probes": ["new_physical_generation", "credential_failover_to_synthetic_b", "http_receipt_even_with_attached_history", "restart_missing_receipt"], "upstream_create_frames_per_denial": 0, "no_reconnect_or_http_fallback": true}
+      },
+      "assertions": ["old_socket_receipt_rejects_before_send", "http_and_ws_receipts_not_interchangeable", "credential_change_invalidates", "no_reconnect_fallback_or_id_stripping"],
+      "expected": {"scope": "continuation", "failure": "Unsupported", "send_state": "NotSent", "receipt": "no_old_generation_reuse", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "No generation/credential normalization or transparent fallback can convert receipt safety differences into matches.", "normalization": []}
+    },
+    {
+      "id": "codex-ws.lite-unsupported.final-v1", "row_id": "codex-ws", "primary_case_id": "codex-ws.final-v1",
+      "description": "Native WS Lite remains explicitly unsupported by the HTTP Lite slice; no client flag opens reconstruction or transport fallback.",
+      "source_refs": ["src/mimic/providers/codex/request.gleam", "docs/codex-http-continuation.md"],
+      "stimulus": {
+        "path_kind": "websocket", "transport": "websocket", "codec_policy": "Strict", "continuation_mode": "same_socket_receipt",
+        "turns": [{
+          "label": "ws-lite", "control": "none",
+          "request": {"method": "GET", "target": "/v1/responses", "headers": [["Upgrade", "websocket"], ["X-OpenAI-Internal-Codex-Responses-Lite", "true"]], "body": "",
+            "text_frames": ["{\"type\":\"response.create\",\"model\":\"synthetic-model\",\"input\":[],\"client_metadata\":{\"ws_request_header_x_openai_internal_codex_responses_lite\":true}}"]},
+          "responses": []
+        }],
+        "parameters": {"http_fallback": "forbidden", "caller_lite_never_selects_codec_policy": true, "native_availability": "not_qualified"}
+      },
+      "assertions": ["explicit_unsupported_not_silent_http_fallback", "no_ws_lite_or_sparse_admission", "strict_default_not_caller_reconstruct"],
+      "expected": {"scope": "request", "failure": "Unsupported", "send_state": "NotSent", "receipt": "none", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "CPA source-declared WS Lite behavior is not current MIMIC support and cannot be normalized into transport parity.", "normalization": []}
+    },
+    {
+      "id": "codex-http.request-errors.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "Independent request, context, encrypted reasoning and missing-continuation upstream errors do not poison credentials or authorize pool replay.",
+      "source_refs": ["src/mimic/providers/codex/errors.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:internal/runtime/executor/codex_executor_terminal.go"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [
+          {"label": "invalid-request", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC request\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 400, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"invalid_request\",\"message\":\"SYNTHETIC invalid input\"}}"], "text_frames": []}]},
+          {"label": "context-too-large", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC context\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 413, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"SYNTHETIC context\"}}"], "text_frames": []}]},
+          {"label": "invalid-reasoning", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":[{\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"synthetic-invalid-opaque\"}]}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 400, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"code\":\"invalid_encrypted_content\",\"message\":\"SYNTHETIC reasoning\"}}"], "text_frames": []}]},
+          {"label": "upstream-missing-continuation", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC upstream error, not local receipt lookup\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 400, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"code\":\"previous_response_not_found\",\"message\":\"SYNTHETIC missing\"}}"], "text_frames": []}]}
+        ],
+        "parameters": {"proposed_provider_categories": ["InvalidRequest", "ContextTooLarge", "InvalidReasoning", "MissingContinuation"], "credential_followup": "synthetic_a_remains_eligible", "expected_pool_walk": false, "gateway_error_mapping": "unqualified_do_not_assume_source_classifier_is_runtime_binding"}
+      },
+      "assertions": ["request_not_credential_scope", "no_cooldown_or_account_pool_walk", "opaque_reasoning_error_no_hydration", "local_missing_receipt_and_upstream_error_distinct", "sanitized_downstream_error_observed_separately"],
+      "expected": {"scope": "request_intent_runtime_binding_unqualified", "baseline_http_adapter": "no_typed_header_rejection", "receipt": "none", "retry": "never", "credential_mutation": "none"},
+      "difference": {"status": "decision_required", "note": "Provider categories are source intent, not an executed gateway classification; exact downstream dictionaries/status and CPA differences require decisions.", "normalization": []}
+    },
+    {
+      "id": "codex-quota.auth-failover.final-v1", "row_id": "codex-quota", "primary_case_id": "codex-quota.final-v1",
+      "description": "Proposed 401 rejection before output may be eligible for scheduler-owned A to B failover only for a standalone unpinned request.",
+      "source_refs": ["src/mimic/providers/codex/errors.gleam", "src/mimic/providers/codex/adapter.gleam"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [{
+          "label": "standalone-no-pin", "control": "proposed_a_rejected_before_output_then_scheduler_b",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC standalone failover\"}", "text_frames": []},
+          "responses": [
+            {"credential_slot": "synthetic-a", "status": 401, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"type\":\"authentication_error\",\"code\":\"invalid_api_key\",\"message\":\"SYNTHETIC fixture rejection\"}}"], "text_frames": []},
+            {"credential_slot": "synthetic-b", "status": 200, "headers": [["Content-Type", "text/event-stream"]], "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-b-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-b-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"], "text_frames": []}
+          ]
+        }],
+        "parameters": {"eligibility_not_actual_retry": true, "account_pin": null, "output_started": false, "cancelled": false, "proposed_attempt_order": ["synthetic-a", "synthetic-b"], "continuation_failover": "forbidden", "identity_on_b": "must_rebuild_from_selected_private_scope"}
+      },
+      "assertions": ["authentication_distinct_from_request_or_quota", "runtime_only_scheduler", "before_output_uncancelled_unpinned_only", "b_private_identity_rebuilt", "no_continuation_account_switch"],
+      "expected": {"scope": "credential", "send_state": "Rejected", "receipt": "completed_b_only_if_qualified", "retry": "eligible_before_output_only_not_admitted"},
+      "difference": {"status": "observation_required", "note": "F03/F12/F13 are unadmitted; a scripted second response does not prove failover, quarantine, availability or durable state.", "normalization": []}
+    },
+    {
+      "id": "codex-quota.reset-units.final-v1", "row_id": "codex-quota", "primary_case_id": "codex-quota.final-v1",
+      "description": "Separate account quota, model capacity and transient 429 reset units; no universal status-only quota or failover inference.",
+      "source_refs": ["src/mimic/providers/codex/errors.gleam", "CPA@acdace936fa7df2905500c7f5e0a97d683138dea:sdk/cliproxy/auth/conductor_cooldown.go"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "default_off",
+        "turns": [
+          {"label": "account-quota-absolute", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC quota\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 429, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"type\":\"usage_limit_reached\",\"resets_at\":18,\"message\":\"SYNTHETIC account quota\"}}"], "text_frames": []}]},
+          {"label": "account-quota-relative", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC relative quota\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 429, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"code\":\"usage_limit_reached\",\"resets_in_seconds\":17}}"], "text_frames": []}]},
+          {"label": "model-capacity", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC capacity\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 429, "headers": [["Content-Type", "application/json"], ["Retry-After", "17"]], "body_chunks": ["{\"error\":{\"code\":\"model_at_capacity\",\"message\":\"SYNTHETIC capacity\"}}"], "text_frames": []}]},
+          {"label": "transient-rate-limit", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC transient\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 429, "headers": [["Content-Type", "application/json"], ["Retry-After", "17"], ["retry-after", "18"]], "body_chunks": ["{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"SYNTHETIC transient\"}}"], "text_frames": []}]}
+        ],
+        "parameters": {"proposed_provider_categories": ["AccountQuota", "AccountQuota", "ModelCapacity", "RateLimit"], "proposed_delay_ms_at_clock_1000": [17000, 17000, 17000, null], "reset_fields_seconds_not_milliseconds": true, "duplicate_retry_after": "no_delay_not_last_value", "baseline_header_only_failure": "Quota/Rejected_for_all_429", "baseline_header_only_delay_ms": [null, null, 17000, null], "body_categories_not_assembled_scope": true}
+      },
+      "assertions": ["body_aware_account_vs_model_vs_transient", "epoch_relative_seconds_public_milliseconds", "duplicate_retry_after_no_last_value_inference", "classifier_not_runtime_admission", "no_unqualified_quota_failover_claim"],
+      "expected": {"scope": "unqualified_response_classification", "receipt": "none", "retry": "not_admitted", "quota_mutation": "not_asserted"},
+      "difference": {"status": "decision_required", "note": "Source classification/reset arithmetic is intent only; conservative assembled rejection versus CPA handling must remain visible, not reported as genuine quota parity.", "normalization": []}
+    },
+    {
+      "id": "codex-lifecycle.uncertain-terminal.final-v1", "row_id": "codex-lifecycle", "primary_case_id": "codex-lifecycle.final-v1",
+      "description": "A quota-looking failed terminal over HTTP 200, 5xx or disconnect may have executed; original transport status and visible prefix prohibit unsafe replay.",
+      "source_refs": ["src/mimic/providers/codex/errors.gleam", "src/mimic/providers/codex/http.gleam"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [
+          {"label": "inband-failed-over-200", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC terminal\",\"stream\":true}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]], "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-failed-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"synthetic-failed-r\",\"object\":\"response\",\"status\":\"failed\",\"output\":[],\"error\":{\"type\":\"usage_limit_reached\",\"resets_in_seconds\":17}}}\n\n"], "text_frames": []}]},
+          {"label": "upstream-503", "control": "fresh_independent_probe", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC uncertain 503\"}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 503, "headers": [["Content-Type", "application/json"]], "body_chunks": ["{\"error\":{\"code\":\"model_at_capacity\",\"message\":\"SYNTHETIC uncertain\"}}"], "text_frames": []}]},
+          {"label": "disconnect-before-terminal", "control": "proposed_upstream_disconnect_after_created", "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC disconnect\",\"stream\":true}", "text_frames": []},
+            "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]], "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-disconnect-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n"], "text_frames": []}]}
+        ],
+        "parameters": {"original_transport_status": [200, 503, 200], "relabel_inband_200_as_429": "forbidden", "expected_automatic_replays": 0, "uncertain_is_not_rejected_without_execution": true}
+      },
+      "assertions": ["failed_incomplete_disconnect_no_receipt", "inband_error_preserves_original_status", "no_retry_for_200_terminal_5xx_disconnect", "no_local_usage_or_terminal_fabrication"],
+      "expected": {"scope": "uncertain_execution", "send_state": "Started", "receipt": "none", "retry": "never"},
+      "difference": {"status": "decision_required", "note": "No CPA retry/error transformation can erase execution uncertainty or turn in-band status into a safe rejection match.", "normalization": []}
+    },
+    {
+      "id": "codex-lifecycle.trailing-corruption.final-v1", "row_id": "codex-lifecycle", "primary_case_id": "codex-lifecycle.final-v1",
+      "description": "A forwarded completed event is not enough: malformed trailing data or extra terminal prevents successful receipt publication.",
+      "source_refs": ["src/mimic/providers/codex/http.gleam", "docs/codex-http-continuation.md"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [{
+          "label": "terminal-then-malformed", "control": "proposed_emit_terminal_before_trailing_error",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC trailing\",\"stream\":true}", "text_frames": []},
+          "responses": [{"credential_slot": "synthetic-a", "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": ["data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-trailing-r\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-trailing-r\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n", "data: {SYNTHETIC malformed}\n\n"], "text_frames": []}]
+        }],
+        "parameters": {"extra_terminal_probe": "append_same_completed_frame_instead_of_malformed_chunk", "followup_id": "synthetic-trailing-r", "followup_upstream_requests": 0, "receipt_publication_requires_clean_eof": true}
+      },
+      "assertions": ["preserved_valid_prefix_not_success_receipt", "clean_eof_required_after_completed", "trailing_corruption_and_duplicate_terminal_reject", "no_retry_after_terminal_delivery"],
+      "expected": {"scope": "response_protocol", "failure": "InvalidResponse", "send_state": "Started", "receipt": "none", "retry": "never"},
+      "difference": {"status": "observation_required", "note": "Valid-prefix forwarding, failure boundary and cleanup require admitted execution; terminal emission is not passing evidence.", "normalization": []}
+    },
+    {
+      "id": "codex-http.bounded-retention.final-v1", "row_id": "codex-http", "primary_case_id": "codex-http.final-v1",
+      "description": "Declarative cache/history/codec boundary probes preserve default-off continuation and bounded observation without allocating heavy fixtures.",
+      "source_refs": ["src/mimic/gateway/codex_http.gleam", "src/mimic/providers/codex/session.gleam", "F11:partial_compiled_packet_admission_withheld"],
+      "stimulus": {
+        "path_kind": "http", "transport": "http/1.1", "codec_policy": "Strict", "continuation_mode": "proposed_bounded_opt_in",
+        "turns": [{
+          "label": "bounded-standalone", "control": "boundary_values_are_proposals_not_materialized",
+          "request": {"method": "POST", "target": "/v1/responses", "headers": [["Thread-Id", "synthetic-client-a"]], "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC bounded\"}", "text_frames": []},
+          "responses": []
+        }],
+        "parameters": {
+          "baseline_cache_limits": {"count": 32, "total_bytes": 8388608, "entry_bytes": 2097152, "ttl_ms": 900000},
+          "history_limits": {"json_bytes": 1048576, "items": 4096, "ttl_ms": 900000},
+          "boundary_probes": {"max_observation_bytes": [16777216, 16777217], "max_events": [100000, 100001], "frame_bytes": [1048576, 1048577], "items": [4096, 4097], "parts": [4096, 4097], "history_json_bytes": [1048576, 1048577], "expiry_clock_ms": [900999, 901000]},
+          "cache_capacity_or_duplicate_id_failure": "Persistence/Started_no_retry",
+          "adversarial_tool_results": ["unmatched_call_id", "duplicate_result", "function_result_for_custom_call", "custom_result_for_function_call"],
+          "default_off_never_changed_by_fixture": true, "no_large_allocations_or_generated_event_streams": true
+        }
+      },
+      "assertions": ["default_off_bounded_baseline_unchanged", "actual_serialized_cache_size_not_character_count", "history_bytes_items_ttl", "codec_observation_events_frame_items_parts_caps", "capacity_duplicate_publication_not_retry", "tool_kind_and_id_boundary_rejects"],
+      "expected": {"scope": "boundary_proposal_only", "receipt": "not_asserted", "retry": "never_for_publication_failure"},
+      "difference": {"status": "decision_required", "note": "Bounds, opt-in and tool safety are proposed tests, not executed runtime fixtures or normalized CPA behavior.", "normalization": []}
+    }
+  ]
+}

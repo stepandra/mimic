@@ -1,0 +1,445 @@
+{
+  "schema": "mimic.f34-devin-fixtures/v1",
+  "slice": "F34",
+  "provider": "devin",
+  "provenance": "SYNTHETIC",
+  "approval": "UNAPPROVED",
+  "mimic_base_revision": "ca86b531cea7e1a509ac8e6038604fe91819ac07",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "historical_manifest": "test/parity/v2/manifest.json",
+  "historical_rows": {
+    "devin-auth-pkce": ["devin", "session_token", "chat_completions", "devin_connect_rpc", "pkce_permanent_session_enrollment"],
+    "devin-auth-import": ["devin", "session_token", "messages", "devin_connect_rpc", "manual_permanent_session_import"],
+    "devin-chat-http": ["devin", "session_token", "chat_completions", "devin_connect_rpc", "buffered_generation"],
+    "devin-messages-http": ["devin", "session_token", "messages", "devin_connect_rpc", "buffered_generation"],
+    "devin-responses-http": ["devin", "session_token", "responses", "devin_connect_rpc", "buffered_generation"],
+    "devin-responses-sse": ["devin", "session_token", "responses", "devin_connect_rpc", "connect_to_sse"],
+    "devin-tools": ["devin", "session_token", "responses", "devin_connect_rpc", "tool_call_result_turns"],
+    "devin-thinking": ["devin", "session_token", "messages", "devin_connect_rpc", "thinking_signature_replay"],
+    "devin-multimodal": ["devin", "session_token", "messages", "devin_connect_rpc", "inline_images_and_unsupported_forms"],
+    "devin-models": ["devin", "session_token", "models", "devin_connect_rpc", "catalog_and_model_uid"],
+    "devin-count-estimate": ["devin", "session_token", "messages", "devin_connect_rpc", "executor_payload_byte_length_estimate"],
+    "devin-stream-lifecycle": ["devin", "session_token", "responses", "devin_connect_rpc", "trailer_truncation_disconnect_cancel"],
+    "devin-persisted-isolation": ["devin", "session_token", "chat_completions", "devin_connect_rpc", "permanent_token_account_session_isolation"],
+    "devin-status-quota": ["devin", "session_token", "chat_completions", "devin_connect_rpc", "status_quota_refresh_without_token_rotation"],
+    "devin-429-failover": ["devin", "session_token", "chat_completions", "devin_connect_rpc", "429_reset_failover"]
+  },
+  "f01_mapping": "provisional_pending",
+  "dependencies": {
+    "F03": "not_admitted_locally", "F23": "not_admitted_locally",
+    "F24": "not_admitted_locally", "F25": "not_admitted_locally",
+    "F26": "not_admitted_locally", "F27": "not_admitted_locally",
+    "F28": "not_admitted_locally", "F29": "not_admitted_locally"
+  },
+  "peer_f23": {
+    "evidence_class": "coordinator_checkpoint_reported_only",
+    "coordinator_revision": "428b7671452a4c637ca227411f02bc1760d66349",
+    "provider_revision": "9facbe42122bb436fbd74db2f7edd2ae8bee76f3",
+    "coordinator_admission": "ACCEPTED_experimental_LOCAL_ChatSSE",
+    "local_import": "not_imported", "local_admission": "not_admitted",
+    "local_qualification": "not_qualified", "contract": "not_imported",
+    "other_client_routes": "not_inferred"
+  },
+  "qualification": {
+    "base_peer_scope": "buffered_Chat_numeric_127.0.0.1_HTTP_only",
+    "base_decoder_seams": "response.feed_prefix_stream.next_project_not_clientSSE_qualification",
+    "local_assembled": "unimported_unqualified",
+    "h2_native_source": "pending", "remote_binary": "closed_separate_qualification",
+    "messages_responses": "unknown_unqualified", "qualified_target_identity": null
+  },
+  "synthetic_context": {
+    "clock_ms": 1000, "selected_model": "devin/swe-1-7",
+    "credentials": {
+      "synthetic-a": "devin-session-token$synthetic-a",
+      "synthetic-b": "devin-session-token$synthetic-b"
+    },
+    "client_credential": "synthetic-client",
+    "origins": {
+      "synthetic-local": "http://127.0.0.1:0",
+      "synthetic-remote": "https://devin.synthetic.invalid"
+    },
+    "manager_state": "independent_per_target",
+    "credential_policy": "known_synthetic_literals_in_headers_and_protobuf_only"
+  },
+  "comparison": {
+    "target": "exact_raw", "headers": "ordered_cased_duplicate_pairs",
+    "body": "exact_known_synthetic_bytes_or_utf8_text",
+    "connect": "flag_length_payload_and_chunk_boundaries_separately",
+    "client_projection": "raw_JSON_or_SSE_separate_from_native_decoder_events",
+    "normalization": [], "differences": "decision_required_never_match"
+  },
+  "binary_policy": {
+    "generator": "f34_closed_synthetic_sketches/v1",
+    "max_sample_bytes": 512, "max_vocabulary_bytes": 4096,
+    "raw_capture": "unsupported", "base64": "encoding_not_redaction",
+    "source_layout": "partial_sketches_pending_qualification"
+  },
+  "required_future_hashes": ["source", "driver", "fixture", "dependency", "executable", "shipment", "contract"],
+  "payloads": {
+    "client_requests": {
+      "chat": {
+        "method": "POST", "target": "/v1/chat/completions?synthetic=b%2Fa&synthetic=a",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{ \"model\":\"devin/swe-1-7\", \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}], \"stream\":false }\n"}
+      },
+      "chat-sse": {
+        "method": "POST", "target": "/v1/chat/completions",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{ \"model\":\"devin/swe-1-7\", \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}], \"stream\":true }\n"}
+      },
+      "messages": {
+        "method": "POST", "target": "/v1/messages",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}],\"max_tokens\":8}"}
+      },
+      "responses": {
+        "method": "POST", "target": "/v1/responses",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"input\":\"SYNTHETIC café\",\"stream\":false}"}
+      },
+      "responses-sse": {
+        "method": "POST", "target": "/v1/responses",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"input\":\"SYNTHETIC café\",\"stream\":true}"}
+      },
+      "models": {
+        "method": "GET", "target": "/v1/models",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": ""}
+      },
+      "count": {
+        "method": "POST", "target": "/v1/messages/count_tokens",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}],\"max_tokens\":8}"}
+      },
+      "tools": {
+        "method": "POST", "target": "/v1/responses",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"synthetic-call\",\"name\":\"synthetic.lookup\",\"arguments\":\"{\\\"q\\\":\\\"café\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"synthetic-call\",\"output\":\"SYNTHETIC result\"}],\"tools\":[{\"type\":\"function\",\"name\":\"synthetic.lookup\",\"parameters\":{\"type\":\"object\"}}],\"stream\":true}"}
+      },
+      "thinking": {
+        "method": "POST", "target": "/v1/messages",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"SYNTHETIC thought\",\"signature\":\"c3ludGhldGljLXNpZ25hdHVyZQ==\",\"devin_signature_encoding\":\"base64\",\"devin_signature_type\":\"synthetic-type\"}]}],\"max_tokens\":8}"}
+      },
+      "media": {
+        "method": "POST", "target": "/v1/messages",
+        "transport": "http/1.1", "content_encoding": "identity",
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Authorization", "Bearer synthetic-client"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"c3ludGhldGljLW5vdC1hbi1pbWFnZQ==\"}},{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://image.synthetic.invalid/never-fetch\"}},{\"type\":\"input_audio\",\"data\":\"synthetic-unsupported\"}]}],\"max_tokens\":8}"}
+      }
+    },
+    "native_requests": {
+      "chat-a": {
+        "method": "POST", "target": "/exa.api_server_pb.ApiServerService/GetChatMessage",
+        "content_encoding": "identity", "credential_slot": "synthetic-a",
+        "headers": [
+          ["Content-Type", "application/connect+proto"],
+          ["Authorization", "Basic devin-session-token$synthetic-a-devin-session-token$synthetic-a"],
+          ["Connect-Protocol-Version", "1"], ["Accept", "*/*"],
+          ["Sentry-Trace", "00000000000000000000000000000001-0000000000000001-1"],
+          ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]
+        ],
+        "body": {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 172, "data": "AAAAAKcKNQoGY2hpc2VsEgozMDAwLjEwLjIxGh9kZXZpbi1zZXNzaW9uLXRva2VuJHN5bnRoZXRpYy1hEhBTWU5USEVUSUMgc3lzdGVtGiMKDnN5bnRoZXRpYy11c2VyEAEaD1NZTlRIRVRJQyBjYWbDqTgFeigKJDAwMDAwMDAwLTAwMDAtNTAwMC04MDAwLTAwMDAwMDAwMDAwMRABoAEBqgEHc3dlLTEtNw=="}
+      },
+      "models-a": {
+        "method": "POST", "target": "/exa.api_server_pb.ApiServerService/GetCliModelConfigs",
+        "content_encoding": "identity", "credential_slot": "synthetic-a",
+        "headers": [["Content-Type", "application/proto"], ["Authorization", "Basic devin-session-token$synthetic-a-devin-session-token$synthetic-a"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "unframed_protobuf", "byte_length": 55, "data": "CjUKBmNoaXNlbBIKMzAwMC4xMC4yMRofZGV2aW4tc2Vzc2lvbi10b2tlbiRzeW50aGV0aWMtYQ=="}
+      },
+      "status-a": {
+        "method": "POST", "target": "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+        "content_encoding": "identity", "credential_slot": "synthetic-a",
+        "headers": [["Content-Type", "application/proto"], ["Authorization", "Basic devin-session-token$synthetic-a-devin-session-token$synthetic-a"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "unframed_protobuf", "byte_length": 55, "data": "CjUKBmNoaXNlbBIKMzAwMC4xMC4yMRofZGV2aW4tc2Vzc2lvbi10b2tlbiRzeW50aGV0aWMtYQ=="}
+      },
+      "chat-b": {
+        "method": "POST", "target": "/exa.api_server_pb.ApiServerService/GetChatMessage",
+        "content_encoding": "identity", "credential_slot": "synthetic-b",
+        "headers": [
+          ["Content-Type", "application/connect+proto"],
+          ["Authorization", "Basic devin-session-token$synthetic-b-devin-session-token$synthetic-b"],
+          ["Connect-Protocol-Version", "1"], ["Accept", "*/*"],
+          ["Sentry-Trace", "00000000000000000000000000000001-0000000000000001-1"],
+          ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]
+        ],
+        "body": {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 172, "data": "AAAAAKcKNQoGY2hpc2VsEgozMDAwLjEwLjIxGh9kZXZpbi1zZXNzaW9uLXRva2VuJHN5bnRoZXRpYy1iEhBTWU5USEVUSUMgc3lzdGVtGiMKDnN5bnRoZXRpYy11c2VyEAEaD1NZTlRIRVRJQyBjYWbDqTgFeigKJDAwMDAwMDAwLTAwMDAtNTAwMC04MDAwLTAwMDAwMDAwMDAwMRABoAEBqgEHc3dlLTEtNw=="}
+      },
+      "models-b": {
+        "method": "POST", "target": "/exa.api_server_pb.ApiServerService/GetCliModelConfigs",
+        "content_encoding": "identity", "credential_slot": "synthetic-b",
+        "headers": [["Content-Type", "application/proto"], ["Authorization", "Basic devin-session-token$synthetic-b-devin-session-token$synthetic-b"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "unframed_protobuf", "byte_length": 55, "data": "CjUKBmNoaXNlbBIKMzAwMC4xMC4yMRofZGV2aW4tc2Vzc2lvbi10b2tlbiRzeW50aGV0aWMtYg=="}
+      },
+      "status-b": {
+        "method": "POST", "target": "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+        "content_encoding": "identity", "credential_slot": "synthetic-b",
+        "headers": [["Content-Type", "application/proto"], ["Authorization", "Basic devin-session-token$synthetic-b-devin-session-token$synthetic-b"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body": {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "unframed_protobuf", "byte_length": 55, "data": "CjUKBmNoaXNlbBIKMzAwMC4xMC4yMRofZGV2aW4tc2Vzc2lvbi10b2tlbiRzeW50aGV0aWMtYg=="}
+      }
+    },
+    "native_responses": {
+      "ok": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 38, "data": "AAAAACEKEHN5bnRoZXRpYy1vdXRwdXQaDVNZTlRIRVRJQyBjYWY="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 8, "data": "AAAAAAMaAcM="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 16, "data": "AAAAAAsaAakoAjoEEAMYAg=="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 7, "data": "AgAAAAJ7fQ=="}
+        ],
+        "termination": "eof"
+      },
+      "tools": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 58, "data": "AAAAADUyMQoOc3ludGhldGljLWNhbGwSEHN5bnRoZXRpYy5sb29rdXAaDXsicSI6ImNhZsOpIn0oCg=="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 7, "data": "AgAAAAJ7fQ=="}
+        ],
+        "termination": "eof"
+      },
+      "thinking": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 62, "data": "AAAAADlKEVNZTlRIRVRJQyB0aG91Z2h0UhNzeW50aGV0aWMtc2lnbmF0dXJlqgEOc3ludGhldGljLXR5cGU="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 38, "data": "AAAAACEKEHN5bnRoZXRpYy1vdXRwdXQaDVNZTlRIRVRJQyBjYWY="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 8, "data": "AAAAAAMaAcM="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 16, "data": "AAAAAAsaAakoAjoEEAMYAg=="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 7, "data": "AgAAAAJ7fQ=="}
+        ],
+        "termination": "eof"
+      },
+      "auth": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 63, "data": "AgAAADp7ImVycm9yIjp7ImNvZGUiOiJ1bmF1dGhlbnRpY2F0ZWQiLCJtZXNzYWdlIjoiU1lOVEhFVElDIn19"}],
+        "termination": "eof"
+      },
+      "invalid": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 64, "data": "AgAAADt7ImVycm9yIjp7ImNvZGUiOiJpbnZhbGlkX2FyZ3VtZW50IiwibWVzc2FnZSI6IlNZTlRIRVRJQyJ9fQ=="}],
+        "termination": "eof"
+      },
+      "quota": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 66, "data": "AgAAAD17ImVycm9yIjp7ImNvZGUiOiJyZXNvdXJjZV9leGhhdXN0ZWQiLCJtZXNzYWdlIjoiU1lOVEhFVElDIn19"}],
+        "termination": "eof"
+      },
+      "truncated": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 38, "data": "AAAAACEKEHN5bnRoZXRpYy1vdXRwdXQaDVNZTlRIRVRJQyBjYWY="},
+          {"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_fragment", "byte_length": 6, "data": "AAAAAAMa"}
+        ],
+        "termination": "eof"
+      },
+      "compressed": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "base64", "framing": "unsupported_connect_flag", "byte_length": 5, "data": "AQAAAAA="}],
+        "termination": "eof"
+      },
+      "unknown": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 17, "data": "AAAAAAyaBglTWU5USEVUSUM="}],
+        "termination": "eof"
+      },
+      "cancel": {
+        "status": 200,
+        "headers": [["Content-Type", "application/connect+proto"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "base64", "framing": "connect_envelope", "byte_length": 38, "data": "AAAAACEKEHN5bnRoZXRpYy1vdXRwdXQaDVNZTlRIRVRJQyBjYWY="}],
+        "termination": "cancel"
+      },
+      "http429": {
+        "status": 429,
+        "headers": [["Content-Type", "text/plain"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"], ["Retry-After", "2"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "SYNTHETIC rate control"}],
+        "termination": "eof"
+      }
+    },
+    "client_projections": {
+      "chat": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{ \"id\":\"synthetic-chat\", \"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC café\"}}], \"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2} }\n"}]
+      },
+      "messages": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"id\":\"synthetic-message\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"SYNTHETIC café\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}"}]
+      },
+      "responses": {
+        "status": 200,
+        "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [{"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"id\":\"synthetic-response\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC café\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}"}]
+      },
+      "chat-sse": {
+        "status": 200,
+        "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [
+          {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": ": SYNTHETIC heartbeat\r\n\r\nda"},
+          {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "ta: {\"id\":\"synthetic-chat\",\"choices\":[{\"delta\":{\"content\":\"SYNTHETIC café\"},\"finish_reason\":null}]}\r\n\r\n"},
+          {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "data: {\"id\":\"synthetic-chat\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\r\n"},
+          {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "data: [DONE]\r\n\r\n"}
+        ]
+      },
+      "responses-sse": {
+        "status": 200,
+        "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+        "body_chunks": [
+          {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"SYNTHETIC café\"}\n\n"},
+          {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"completed\"}}\n\n"}
+        ]
+      }
+    },
+    "local_inputs": {
+      "pkce": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"code\":\"synthetic-code\",\"code_verifier\":\"synthetic-verifier\",\"state\":\"synthetic-state\",\"wrong_state\":\"synthetic-wrong-state\",\"callback\":\"http://127.0.0.1:0/synthetic/callback\"}"},
+      "import": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"session_token\":\"devin-session-token$synthetic-a\",\"source\":\"explicit_synthetic_manual_input\",\"refresh_token\":null}"},
+      "estimate": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "SYNTHETIC café"},
+      "isolation": {"provenance": "SYNTHETIC", "encoding": "utf-8", "data": "{\"accounts\":[\"synthetic-a\",\"synthetic-b\"],\"sessions\":[\"synthetic-session-a\",\"synthetic-session-b\"],\"restart\":\"proposal_only\",\"token_rotation\":false}"}
+    }
+  },
+  "cases": [
+    {
+      "id":"final-v1-devin-auth-pkce", "row_id":"devin-auth-pkce", "primary_case_id":"devin-auth-pkce.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[], "client_projection":null, "local_input":"pkce", "control":"pending",
+      "checks":["pkce_state_mismatch_reject","no_login_or_code_exchange"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-auth-import", "row_id":"devin-auth-import", "primary_case_id":"devin-auth-import.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[], "client_projection":null, "local_input":"import", "control":"pending",
+      "checks":["permanent_token_not_rotating_oauth","no_ambient_import"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-chat-http", "row_id":"devin-chat-http", "primary_case_id":"devin-chat-http.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat", "native_pairs":[["chat-a","ok"]], "client_projection":"chat", "local_input":null, "control":"pending",
+      "checks":["raw_target_body_headers","native_not_client_projection"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-messages-http", "row_id":"devin-messages-http", "primary_case_id":"devin-messages-http.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"messages", "native_pairs":[["chat-a","ok"]], "client_projection":"messages", "local_input":null, "control":"pending",
+      "checks":["messages_route_not_inferred"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-responses-http", "row_id":"devin-responses-http", "primary_case_id":"devin-responses-http.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"responses", "native_pairs":[["chat-a","ok"]], "client_projection":"responses", "local_input":null, "control":"pending",
+      "checks":["responses_route_not_inferred"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-responses-sse", "row_id":"devin-responses-sse", "primary_case_id":"devin-responses-sse.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"responses-sse", "native_pairs":[["chat-a","ok"]], "client_projection":"responses-sse", "local_input":null, "control":"pending",
+      "checks":["connect_trailer_not_SSE_terminal","split_utf8_and_SSE_chunks"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-tools", "row_id":"devin-tools", "primary_case_id":"devin-tools.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"tools", "native_pairs":[["chat-a","tools"]], "client_projection":null, "local_input":null, "control":"pending",
+      "checks":["tool_call_result_ids_and_arguments","request_encoder_and_projection_pending"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-thinking", "row_id":"devin-thinking", "primary_case_id":"devin-thinking.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"thinking", "native_pairs":[["chat-a","thinking"]], "client_projection":null, "local_input":null, "control":"pending",
+      "checks":["signature_bytes_and_type_not_redacted_by_base64","replay_encoder_pending"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-multimodal", "row_id":"devin-multimodal", "primary_case_id":"devin-multimodal.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"media", "native_pairs":[], "client_projection":null, "local_input":null, "control":"unsupported",
+      "checks":["unsupported_media_failclosed_no_fetch","not_a_valid_image_fixture"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-models", "row_id":"devin-models", "primary_case_id":"devin-models.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"models", "native_pairs":[["models-a",null]], "client_projection":null, "local_input":null, "control":"pending",
+      "checks":["unary_proto_not_chat_envelope","model_uid_catalog_pending"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-count-estimate", "row_id":"devin-count-estimate", "primary_case_id":"devin-count-estimate.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"count", "native_pairs":[], "client_projection":null, "local_input":"estimate", "control":"pending",
+      "checks":["payload_utf8_byte_length_div4_estimate","no_upstream_tokenizer"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-stream-lifecycle", "row_id":"devin-stream-lifecycle", "primary_case_id":"devin-stream-lifecycle.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"responses-sse", "native_pairs":[["chat-a","cancel"]], "client_projection":null, "local_input":null, "control":"request",
+      "checks":["cancel_disconnect_cleanup_pending","no_replay_after_Started"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-persisted-isolation", "row_id":"devin-persisted-isolation", "primary_case_id":"devin-persisted-isolation.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat", "native_pairs":[["chat-a","ok"],["chat-b","ok"]], "client_projection":null, "local_input":"isolation", "control":"pending",
+      "checks":["account_session_isolation_and_restart_pending","no_real_persistence"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-status-quota", "row_id":"devin-status-quota", "primary_case_id":"devin-status-quota.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[["status-a",null]], "client_projection":null, "local_input":null, "control":"pending",
+      "checks":["status_refresh_not_token_rotation","unary_proto_not_chat_envelope"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-429-failover", "row_id":"devin-429-failover", "primary_case_id":"devin-429-failover.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat", "native_pairs":[["chat-a","http429"]], "client_projection":null, "local_input":null, "control":"quota",
+      "checks":["Retry_After_is_not_replay_authority","F27_recovery_unadmitted"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-native-connect", "row_id":"devin-chat-http", "primary_case_id":"devin-chat-http.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[["chat-a","ok"]], "client_projection":null, "local_input":null, "control":"pending",
+      "checks":["native_layout_source_qualification_pending","decoder_not_assembled_ingress"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-chat-sse", "row_id":"devin-chat-http", "primary_case_id":"devin-chat-http.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat-sse", "native_pairs":[["chat-a","ok"]], "client_projection":"chat-sse", "local_input":null, "control":"pending",
+      "checks":["F23_coordinator_admitted_unimported_unqualified","client_terminal_separate_from_native"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-trailer-auth", "row_id":"devin-status-quota", "primary_case_id":"devin-status-quota.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat", "native_pairs":[["chat-a","auth"]], "client_projection":null, "local_input":null, "control":"credential",
+      "checks":["trailer_auth_credential_scope","no_replay_after_Started"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-trailer-invalid", "row_id":"devin-status-quota", "primary_case_id":"devin-status-quota.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat", "native_pairs":[["chat-a","invalid"]], "client_projection":null, "local_input":null, "control":"invalid",
+      "checks":["trailer_invalid_request_scope_no_reauthorize","no_replay_after_Started"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-trailer-quota", "row_id":"devin-429-failover", "primary_case_id":"devin-429-failover.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"chat", "native_pairs":[["chat-a","quota"]], "client_projection":null, "local_input":null, "control":"quota",
+      "checks":["trailer_quota_not_invalid_credential","no_replay_after_Started"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-truncated", "row_id":"devin-stream-lifecycle", "primary_case_id":"devin-stream-lifecycle.final-v1", "mapping_status":"provisional_pending",
+      "client_request":"responses-sse", "native_pairs":[["chat-a","truncated"]], "client_projection":null, "local_input":null, "control":"request",
+      "checks":["EOF_not_terminal","no_partial_success_or_replay"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-compressed", "row_id":"devin-stream-lifecycle", "primary_case_id":"devin-stream-lifecycle.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[["chat-a","compressed"]], "client_projection":null, "local_input":null, "control":"unsupported",
+      "checks":["unsupported_compression_no_fallback"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-unknown-field", "row_id":"devin-stream-lifecycle", "primary_case_id":"devin-stream-lifecycle.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[["chat-a","unknown"]], "client_projection":null, "local_input":null, "control":"unsupported",
+      "checks":["unknown_semantic_field_no_lossy_fallback"], "native_transport":"http/1.1", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-h2", "row_id":"devin-stream-lifecycle", "primary_case_id":"devin-stream-lifecycle.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[["chat-a","ok"]], "client_projection":null, "local_input":null, "control":"h2",
+      "checks":["h2_native_source_qualification_pending","no_H1_fallback"], "native_transport":"http/2", "origin_slot":"synthetic-local"
+    },
+    {
+      "id":"final-v1-devin-remote", "row_id":"devin-stream-lifecycle", "primary_case_id":"devin-stream-lifecycle.final-v1", "mapping_status":"provisional_pending",
+      "client_request":null, "native_pairs":[["chat-a","ok"]], "client_projection":null, "local_input":null, "control":"remote",
+      "checks":["remote_qualification_distinct_closed","no_network_or_loopback_fallback"], "native_transport":"http/1.1", "origin_slot":"synthetic-remote"
+    }
+  ]
+}
