@@ -36,6 +36,8 @@ GLEAM="$GLEAM" python3 scripts/smoke-enrollment.py
 GLEAM="$GLEAM" python3 -m unittest discover -s test -p 'kimi_wire_test.py' -v
 python3 scripts/smoke-kimi-compat-stream.py --self-test
 GLEAM="$GLEAM" python3 scripts/smoke-kimi-compat-stream.py
+python3 scripts/smoke-kimi-messages-stream.py --self-test
+GLEAM="$GLEAM" python3 scripts/smoke-kimi-messages-stream.py
 GLEAM="$GLEAM" python3 scripts/smoke-provider-websocket.py
 GLEAM="$GLEAM" python3 scripts/smoke-codex-http.py
 
@@ -52,6 +54,7 @@ python3 scripts/smoke-gateway.py --shipment build/erlang-shipment
 python3 scripts/smoke-http-providers.py --shipment build/erlang-shipment
 python3 scripts/smoke-enrollment.py --shipment build/erlang-shipment
 python3 scripts/smoke-kimi-compat-stream.py --shipment build/erlang-shipment
+python3 scripts/smoke-kimi-messages-stream.py --shipment build/erlang-shipment
 python3 scripts/smoke-provider-websocket.py --shipment build/erlang-shipment
 python3 scripts/smoke-codex-http.py --shipment build/erlang-shipment
 printf '%s\n' 'Local integration checks passed. CPA differential/live gates were not run.'

@@ -658,7 +658,7 @@ fn dispatch(
                   serve_xai(req, engine, request, stream)
                 "kimi", "responses", _
                 | "kimi", "chat/completions", _
-                | "kimi", "messages", False
+                | "kimi", "messages", _
                 -> serve_kimi(req, config, engine, request, stream)
                 "openai-compatible-kimi", "chat/completions", _ ->
                   serve_kimi_compat(req, config, engine, request, stream)
@@ -977,6 +977,11 @@ fn serve_kimi(
           case responses_http.open_sse(opened.status, opened.headers) {
             Ok(_) ->
               case request.operation {
+                "messages" ->
+                  stream_encoded(req, opened, fn(response, emit) {
+                    kimi.run_messages_for(response, request, emit)
+                    |> result.map(fn(_) { Nil })
+                  })
                 "chat/completions" ->
                   stream_encoded(req, opened, fn(response, emit) {
                     kimi.run_chat_for(response, request, fn(event) {

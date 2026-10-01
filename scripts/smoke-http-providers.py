@@ -738,7 +738,11 @@ def kimi_checks(flow, mode, domain):
                 ("/v1/responses", dict(payload, tools=[{"type": "custom", "name": "unsupported"}])),
                 ("/v1/responses", dict(payload, previous_response_id="unscoped")),
                 ("/v1/responses/compact", payload),
-                ("/v1/messages", dict(messages, stream=True)),
+                # Messages SSE is admitted by F14; unsupported media must
+                # still fail before I/O in that newly supported mode.
+                ("/v1/messages", dict(messages, stream=True, messages=[
+                    {"role": "user", "content": [
+                        {"type": "audio", "data": "synthetic"}]}])),
             ]:
                 assert call(flow.port, rejected, path)[0] == 422
                 assert len(upstream.requests) == before
@@ -880,7 +884,10 @@ def generic_kimi_checks(flow):
             assert flow.upstream.requests[-1][1]["Authorization"] == "Bearer synthetic-kimi-key"
             before = len(flow.upstream.requests)
             for route, rejected in [
-                ("/v1/chat/completions", dict(payload, stream=True)),
+                # F15 admits generic Chat SSE, but not unsupported media.
+                ("/v1/chat/completions", dict(payload, stream=True, messages=[{
+                    "role": "user", "content": [{"type": "input_audio",
+                        "input_audio": {"data": "AA==", "format": "wav"}}]}])),
                 ("/v1/chat/completions", dict(payload, previous_response_id="unscoped")),
                 ("/v1/chat/completions", dict(payload, messages=[{
                     "role": "user", "content": [{"type": "input_audio",

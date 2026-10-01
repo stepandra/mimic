@@ -14,11 +14,47 @@ import mimic/protocol/chat/http as chat_http
 import mimic/protocol/chat/stream as chat_stream
 import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream
+import mimic/providers/claude/http as claude_http
+import mimic/providers/claude/stream as claude_stream
 import mimic/providers/contracts
 import mimic/providers/kimi/json_guard
+import mimic/providers/kimi/models
 import mimic/providers/kimi/transform
 import mimic/providers/runtime
 import mimic/types.{type Header}
+
+/// Native Messages use the actual Claude observer and byte lifecycle. Only the
+/// selected upstream message_start model is restored, never tool/vendor data.
+pub fn run_messages_for(
+  response: runtime.Response,
+  request: contracts.Request,
+  emit: fn(String) -> Result(responses_http.Control, String),
+) -> Result(claude_stream.Status, contracts.Failure) {
+  use upstream <- result.try(
+    case
+      request.provider,
+      request.protocol,
+      request.operation,
+      request.mode,
+      models.upstream_id(request.model)
+    {
+      "kimi", "anthropic", "messages", contracts.Streaming, Some(upstream) ->
+        Ok(upstream)
+      _, _, _, _, _ -> {
+        runtime.cancel(response.stream)
+        Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, None))
+      }
+    },
+  )
+  claude_http.run_with_model(response, upstream, request.model, emit)
+  |> result.map_error(fn(error) {
+    case error {
+      "Claude downstream closed" ->
+        contracts.Failure(contracts.Cancelled, contracts.Started, None)
+      _ -> invalid_response()
+    }
+  })
+}
 
 /// Requires shared-core immutable snapshot 2. Chat remains native Chat; no
 /// Responses projection or provider-local SSE parser participates.
