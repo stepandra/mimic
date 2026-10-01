@@ -1,4 +1,13 @@
-# F08 destination admission — in progress
+# F08 destination admission
+
+The final destination now admits this bounded local workflow: **27 source CLI
+and 27 shipment scenarios passed**, alongside the complete 801-test Gleam gate.
+The later HTTP OWS correction, independent review and full evidence are recorded
+in [the final-wave validation report](FINAL_WAVE_LANDING_VALIDATION.md).
+Native/live/upstream-check qualification remains blocked.
+
+The sections below preserve the earlier admission attempts and their original
+pending status; they are historical evidence, not the latest admission verdict.
 
 Only the nine F08-owned files from corrected snapshot
 `c771d2365f0241e90f3b5faebfcbe98290a651be` were imported. Their destination

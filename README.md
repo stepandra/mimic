@@ -90,8 +90,12 @@ Claude/Kimi integration and opt-in Codex WebSocket checks.
 The [earlier merge-destination validation](docs/HTTP_WS_MERGE_VALIDATION.md)
 records that publication. The
 [nine-stream destination report](docs/NEXT_PARITY_MERGE_VALIDATION.md) records
-the latest **698-test Gleam / 92-test Python** gate, source/shipment workflows,
+the earlier **698-test Gleam / 92-test Python** gate, source/shipment workflows,
 failed-attempt history and remaining CPA/native/live gaps.
+The [final-wave subset report](docs/FINAL_WAVE_LANDING_VALIDATION.md) records
+the latest **801-test Gleam / 224-test Python** gate, admission of F08/F14/F15/
+F22/F23, and preparation-only F30–F34. The remaining final-wave packets are
+not all admitted; no real-account login or live inference is claimed.
 
 ## Provider gateway
 
@@ -112,8 +116,10 @@ to use. Never put tokens in command arguments, checked-in configuration, logs
 or conformance reports.
 
 Native gateway modes include Claude Messages/SSE with API keys or configured
-OAuth, native Kimi Chat/Responses JSON/SSE and buffered Messages with supported
-tools/thinking/images, and a separate buffered generic Kimi adapter.
+OAuth, native Kimi Chat/Responses/Messages JSON/SSE with supported
+tools/thinking/images, and a separate generic Kimi Chat JSON/SSE adapter.
+Claude's optional post-login companion workflow requires explicit operator
+approval and configured endpoints; see [the companion guide](docs/F08_CLAUDE_COMPANION.md).
 Codex WebSocket is an explicit opt-in:
 `codex_websocket` defaults to `false`. Only configured Codex models receive
 that capability; this does not enable WebSocket for every provider. Bounded

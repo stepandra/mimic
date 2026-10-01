@@ -12,6 +12,7 @@ export PYTHONDONTWRITEBYTECODE=1
 "$GLEAM" run -m parity/runner -- check --manifest test/parity/v2/manifest.json
 # Source/unit admission only. Never implicitly export/run a CPA candidate.
 python3 scripts/parity/safe_unit_tests.py
+python3 scripts/parity/preparation_unit_tests.py
 python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
 python3 -m unittest discover -s scripts -p 'test_smoke_claude_companion.py' -v
 # Unit contracts only: guarded synthetic loopback, no downloads/containers/clients.

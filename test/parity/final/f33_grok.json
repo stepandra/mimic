@@ -1,0 +1,390 @@
+{
+  "schema": "mimic.f33-grok-fixtures/v1",
+  "slice": "F33",
+  "provider": "xai",
+  "provenance": "SYNTHETIC",
+  "approval": "UNAPPROVED",
+  "mimic_base_revision": "ca86b531cea7e1a509ac8e6038604fe91819ac07",
+  "cpa_revision": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "historical_manifest": "test/parity/v2/manifest.json",
+  "f01_mapping": "provisional_pending",
+  "historical_rows": {
+    "xai-api": ["xai", "api_key", "chat_completions", "xai_api", "http_backend_identity"],
+    "xai-oauth": ["xai", "oauth", "responses", "grok_build", "http_backend_identity"]
+  },
+  "dependencies": {
+    "F03": "not_admitted", "F07": "not_admitted", "F17": "not_admitted",
+    "F18": "not_admitted", "F19": "not_admitted", "F20": "not_admitted", "F21": "not_admitted"
+  },
+  "peer_f17": {
+    "evidence_class": "peer_finding_not_imported_or_qualified",
+    "Execute": "prepareResponsesRequestTo_deletes_previous_response_id",
+    "ExecuteStream": "prepareResponsesRequestTo_deletes_previous_response_id",
+    "compact": "alone_readds_previous_response_id_on_separate_base",
+    "reasoning_cache": "model_session_cache_not_qualified_receipt_or_isolation",
+    "reference_contract": "unsupported-reference-contract",
+    "feature_status": "BLOCKED",
+    "production_continuation_api": "none"
+  },
+  "qualification": {
+    "executor_evidence": "not_assembled_route_qualification",
+    "source_route": "unknown", "assembled_runtime": "unknown", "qualified_route": null
+  },
+  "synthetic_context": {
+    "clock_ms": 1000, "selected_model": "synthetic-model",
+    "credential_slots": ["synthetic-a", "synthetic-b"],
+    "credential_policy": "explicit_synthetic_placeholders_only",
+    "manager_state": "independent_per_target", "session_key": "synthetic-session",
+    "origin_slots": {"xai_api": "synthetic-api", "grok_build": "synthetic-proxy"}
+  },
+  "comparison": {
+    "target": "exact_raw", "headers": "ordered_case_sensitive_pairs",
+    "body": "utf8_exact_text", "sse": "raw_chunks_and_frame_bytes_separately",
+    "websocket": "ordered_exact_text_payloads_and_close_no_physical_wire_claim",
+    "normalization": [], "differences": "decision_required_never_match"
+  },
+  "required_future_hashes": ["source", "driver", "fixture", "dependency", "executable", "shipment", "contract"],
+  "cases": [
+    {
+      "id": "final-v1-grok-api-identity",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "API-key/API identity and raw Chat ingress proposal; not a supported route claim.",
+      "source_refs": ["test/parity/v2/manifest.json#xai-api"],
+      "source_requirement": "Qualify the pinned historical Chat-to-xai_api assembled route; an executor URL or model catalog is not that evidence.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "chat_completions",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-a",
+          "request": {
+            "method": "POST", "target": "/v1/chat/completions?synthetic=b%2Fa&synthetic=a",
+            "headers": [
+              ["Content-Type", "application/json"], ["Authorization", "Bearer synthetic-client"],
+              ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]
+            ],
+            "body": "{ \"model\":\"synthetic-model\", \"messages\":[{\"role\":\"user\",\"content\":\"SYNTHETIC café\"}], \"stream\":false, \"synthetic_extension\":{\"b\":2,\"a\":1} }\n",
+            "text_frames": []
+          },
+          "responses": [{
+            "status": 200,
+            "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "mixed-case"], ["X-Synthetic", "second"]],
+            "body_chunks": ["{ \"id\":\"synthetic-chat\", \"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"SYNTHETIC\"}}] }\n"],
+            "text_frames": [], "close": null
+          }]
+        }]
+      },
+      "assertions": ["api_key_selects_xai_api_not_grok_build", "raw_query_and_json_extension_order_preserved"],
+      "expected": {"kind":"wire_observation_proposal","scope":"NONE","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"The historical Chat tuple is pending source review; this script neither translates nor sends it.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-oauth-proxy-identity",
+      "row_id": "xai-oauth", "primary_case_id": "xai-oauth.final-v1", "mapping_status": "provisional_pending",
+      "description": "OAuth/Grok Build proxy identity proposal, distinct from API-key/API selection.",
+      "source_refs": ["test/parity/v2/manifest.json#xai-oauth", "docs/providers-xai.md#L58-L78"],
+      "source_requirement": "Bind an explicit synthetic OAuth account and proxy backend to assembled ingress; OAuth helpers do not qualify this route.",
+      "stimulus": {
+        "auth_mode": "oauth", "upstream_mode": "grok_build", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-b",
+          "request": {
+            "method": "POST", "target": "/v1/responses",
+            "headers": [["Authorization", "Bearer synthetic-client"], ["X-Synthetic", "proxy-first"], ["x-synthetic", "proxy-second"], ["X-Synthetic", "proxy-third"]],
+            "body": "{ \"model\":\"synthetic-model\", \"input\":\"SYNTHETIC proxy\", \"stream\":false }\n",
+            "text_frames": []
+          },
+          "responses": [{
+            "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+            "body_chunks": ["data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-proxy-r\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n"],
+            "text_frames": [], "close": null
+          }]
+        }]
+      },
+      "assertions": ["oauth_selects_grok_build_not_xai_api", "api_and_proxy_origins_and_account_state_distinct", "no_ambient_or_shared_rotating_grants"],
+      "expected": {"kind":"wire_observation_proposal","scope":"NONE","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"SSE is an invented synthetic response script, not captured Grok Build output or proof of OAuth gateway support.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-tools-sse-full-history",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "Tool declaration, argument deltas and full-history result turn proposal, without state-reference continuation.",
+      "source_refs": ["src/mimic/providers/xai/request.gleam", "src/mimic/providers/xai/tools.gleam", "docs/xai-native-v2.md#L97-L108"],
+      "source_requirement": "Qualify tool alias restoration on the selected response handle and assembled Responses projection; source helpers are insufficient.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [
+          {
+            "credential_slot": "synthetic-a",
+            "request": {
+              "method": "POST", "target": "/v1/responses",
+              "headers": [["Content-Type", "application/json"], ["X-Synthetic", "first"], ["x-synthetic", "second"], ["X-Synthetic", "third"]],
+              "body": "{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC tool\",\"stream\":true,\"tools\":[{\"type\":\"function\",\"name\":\"synthetic.lookup\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}}}],\"tool_choice\":\"auto\"}",
+              "text_frames": []
+            },
+            "responses": [{
+              "status": 200,
+              "headers": [["Content-Type", "text/event-stream"], ["X-Synthetic", "one"], ["x-synthetic", "two"], ["X-Synthetic", "three"]],
+              "body_chunks": [
+                ": SYNTHETIC heartbeat\r\n\r\n",
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"synthetic-tool-r\",\"output\":[]}}\r\n\r\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"synthetic-item\",\"type\":\"function_call\",\"call_id\":\"synthetic-call\",\"name\":\"synthetic.lookup\",\"arguments\":\"\"}}\r\n\r\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"delta\":\"{\\\"q\\\":\\\"caf\"}\r\n\r\nda",
+                "ta: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"delta\":\"é\\\"}\"}\r\n\r\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-tool-r\",\"output\":[{\"id\":\"synthetic-item\",\"type\":\"function_call\",\"call_id\":\"synthetic-call\",\"name\":\"synthetic.lookup\",\"arguments\":\"{\\\"q\\\":\\\"café\\\"}\"},{\"type\":\"reasoning\",\"encrypted_content\":\"synthetic-opaque\"}],\"usage\":{\"input_tokens\":5,\"output_tokens\":4}}}\r\n\r\n"
+              ],
+              "text_frames": [], "close": null
+            }]
+          },
+          {
+            "credential_slot": "synthetic-a",
+            "request": {
+              "method": "POST", "target": "/v1/responses",
+              "headers": [["Content-Type", "application/json"]],
+              "body": "{\"model\":\"synthetic-model\",\"input\":[{\"role\":\"user\",\"content\":\"SYNTHETIC tool\"},{\"type\":\"function_call\",\"call_id\":\"synthetic-call\",\"name\":\"synthetic.lookup\",\"arguments\":\"{\\\"q\\\":\\\"café\\\"}\"},{\"type\":\"reasoning\",\"encrypted_content\":\"synthetic-opaque\"},{\"type\":\"function_call_output\",\"call_id\":\"synthetic-call\",\"output\":\"SYNTHETIC result\"}],\"stream\":false,\"tools\":[{\"type\":\"function\",\"name\":\"synthetic.lookup\",\"parameters\":{\"type\":\"object\"}}]}",
+              "text_frames": []
+            },
+            "responses": [{
+              "status": 200, "headers": [["Content-Type", "text/event-stream"]],
+              "body_chunks": ["data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-tool-r2\",\"output\":[],\"usage\":{\"input_tokens\":9,\"output_tokens\":1}}}\n\n"],
+              "text_frames": [], "close": null
+            }]
+          }
+        ]
+      },
+      "assertions": ["tool_name_call_and_item_ids_bound_to_selected_request", "argument_deltas_chunks_and_terminal_not_reframed", "opaque_reasoning_and_usage_preserved", "full_history_result_turn_is_not_receipt_authority"],
+      "expected": {"kind":"wire_observation_proposal","scope":"NONE","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"An additive Responses/tool control mapped provisionally to xai-api; it does not replace that row's historical Chat protocol.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-continuation-http-blocker",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "Buffered HTTP reference-state blocker; no receipt or replay API is proposed.",
+      "source_refs": ["peer:F17:prepareResponsesRequestTo", "src/mimic/providers/xai/bridge.gleam#L100-L112", "src/mimic/providers/xai/request.gleam#L54-L69"],
+      "source_requirement": "F17 is unadmitted: Execute deletes previous_response_id; reasoning/model/session cache supplies neither a qualified receipt nor isolation.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-a",
+          "request": {
+            "method": "POST", "target": "/v1/responses",
+            "headers": [["X-Synthetic-Session", "synthetic-session"]],
+            "body": "{ \"model\":\"synthetic-model\", \"previous_response_id\":\"synthetic-prior\", \"input\":\"SYNTHETIC delta\", \"stream\":false, \"reasoning\":{\"effort\":\"high\"}, \"prompt_cache_key\":\"synthetic-session\" }\n",
+            "text_frames": []
+          },
+          "responses": []
+        }]
+      },
+      "assertions": ["previous_response_id_never_silently_dropped_as_match", "no_receipt_inferred_from_model_session_reasoning_cache", "no_cross_account_reference_replay"],
+      "expected": {"kind":"decision_required","scope":"REQUEST","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"unsupported-reference-contract"},
+      "difference": {"status":"decision_required","note":"Historical Execute deletes the reference; local bridge requires no previous_response_id. This is a blocker, not qualified equivalent continuation.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-continuation-sse-blocker",
+      "row_id": "xai-oauth", "primary_case_id": "xai-oauth.final-v1", "mapping_status": "provisional_pending",
+      "description": "Streaming HTTP reference-state blocker kept distinct from compact and physical WS.",
+      "source_refs": ["peer:F17:prepareResponsesRequestTo"],
+      "source_requirement": "F17 is unadmitted: ExecuteStream also deletes previous_response_id. SSE transport does not qualify state-reference semantics.",
+      "stimulus": {
+        "auth_mode": "oauth", "upstream_mode": "grok_build", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-b",
+          "request": {
+            "method": "POST", "target": "/v1/responses",
+            "headers": [["X-Synthetic-Session", "synthetic-session"]],
+            "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-prior\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"synthetic-call\",\"output\":\"SYNTHETIC delta\"}],\"stream\":true}",
+            "text_frames": []
+          },
+          "responses": []
+        }]
+      },
+      "assertions": ["ExecuteStream_reference_deletion_not_receipt_support", "tool_result_reference_needs_qualified_scope", "no_production_continuation_api"],
+      "expected": {"kind":"decision_required","scope":"REQUEST","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"unsupported-reference-contract"},
+      "difference": {"status":"decision_required","note":"No synthetic successful response is supplied for this unsupported reference contract.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-continuation-compact-blocker",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "Compact-specific reference blocker; its separate-base exception cannot qualify ordinary HTTP.",
+      "source_refs": ["peer:F17:compact_separate_base", "src/mimic/providers/xai/request.gleam#L54-L69"],
+      "source_requirement": "F17 reports compact alone re-adds previous_response_id on a separate base. Qualify that exact branch independently; do not promote it to a continuation receipt.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-a",
+          "request": {
+            "method": "POST", "target": "/v1/responses/compact",
+            "headers": [["Content-Type", "application/json"]],
+            "body": "{\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-prior\",\"input\":[{\"type\":\"reasoning\",\"encrypted_content\":\"synthetic-opaque\"}]}",
+            "text_frames": []
+          },
+          "responses": []
+        }]
+      },
+      "assertions": ["compact_separate_base_exception_not_generalized", "no_qualified_reference_receipt_or_account_isolation", "no_production_continuation_api"],
+      "expected": {"kind":"decision_required","scope":"REQUEST","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"unsupported-reference-contract"},
+      "difference": {"status":"decision_required","note":"Field re-addition is executor behavior, not assembled route qualification or authority to implement continuation.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-ws-source-runtime-blocker",
+      "row_id": "xai-oauth", "primary_case_id": "xai-oauth.final-v1", "mapping_status": "provisional_pending",
+      "description": "Raw logical WS payload/close control only; physical source/runtime route remains unknown.",
+      "source_refs": ["docs/xai-native-v2.md#L91-L108", "test/parity/v2/manifest.json#xai-oauth"],
+      "source_requirement": "Independently qualify pinned physical WS handshake, backend, connection/account/tenant/model/client receipt and cancellation. Old adapter tests or endpoint planners cannot do so.",
+      "stimulus": {
+        "auth_mode": "oauth", "upstream_mode": "grok_build", "input_protocol": "responses",
+        "transport": "websocket", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-b",
+          "request": {
+            "method": "GET", "target": "/v1/responses?synthetic=b%2Fa&synthetic=a",
+            "headers": [["Upgrade", "websocket"], ["Connection", "Upgrade"], ["X-Synthetic", "one"], ["x-synthetic", "two"], ["X-Synthetic", "three"]],
+            "body": "",
+            "text_frames": [
+              "{ \"type\":\"response.create\", \"model\":\"synthetic-model\", \"input\":\"SYNTHETIC WS\" }\n",
+              "{\"type\":\"response.create\",\"model\":\"synthetic-model\",\"previous_response_id\":\"synthetic-ws-r\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"synthetic-orphan\",\"output\":\"SYNTHETIC orphan\"}]}"
+            ]
+          },
+          "responses": [{
+            "status": 101,
+            "headers": [["Upgrade", "websocket"], ["Connection", "Upgrade"], ["X-Synthetic", "one"], ["x-synthetic", "two"], ["X-Synthetic", "three"]],
+            "body_chunks": [],
+            "text_frames": ["{ \"type\":\"response.completed\", \"response\":{\"id\":\"synthetic-ws-r\",\"output\":[]} }\n"],
+            "close": {"code":1000,"reason":"SYNTHETIC close"}
+          }]
+        }]
+      },
+      "assertions": ["logical_text_payloads_and_close_exact_not_binary_capture", "orphan_or_cross_scope_reference_must_not_send", "rotation_cancel_or_new_socket_cannot_reuse_receipt"],
+      "expected": {"kind":"blocked_control","scope":"REQUEST","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"source_runtime_unknown"},
+      "difference": {"status":"decision_required","note":"Even the synthetic 101/terminal is an unexecuted adversarial proposal, not WS support or a qualified receipt.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-image-source-runtime-blocker",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "Image input shape control, not an image-generation or upload route.",
+      "source_refs": ["docs/xai-native-v2.md#L97-L108", "src/mimic/providers/xai/request.gleam"],
+      "source_requirement": "Before adding an executable image case, qualify the exact pinned operation, media encoding, upload/input handling and assembled route. Current source/runtime qualification is unknown.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-a",
+          "request": {
+            "method": "POST", "target": "/v1/responses",
+            "headers": [["Content-Type", "application/json"]],
+            "body": "{\"model\":\"synthetic-model\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"SYNTHETIC image control\"},{\"type\":\"input_image\",\"image_url\":\"https://synthetic.invalid/image\",\"detail\":\"low\"}]}]}",
+            "text_frames": []
+          },
+          "responses": []
+        }]
+      },
+      "assertions": ["nested_image_not_silently_dropped", "request_scoped_rejection_before_send_or_keep_route_blocked", "URL_catalog_or_helper_not_media_route_evidence"],
+      "expected": {"kind":"blocked_control","scope":"REQUEST","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"source_runtime_unknown"},
+      "difference": {"status":"decision_required","note":"The .invalid URL is inert raw JSON, not a fetch target or supported media fixture; no binary capture or generated image is claimed.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-video-source-runtime-blocker",
+      "row_id": "xai-oauth", "primary_case_id": "xai-oauth.final-v1", "mapping_status": "provisional_pending",
+      "description": "Video input shape control, not a claimed Grok Build video route.",
+      "source_refs": ["docs/xai-native-v2.md#L97-L108", "test/parity/v2/manifest.json#xai-oauth"],
+      "source_requirement": "Exact pinned video operation, frame/timestamp handling, encoding and assembled route must be source-qualified independently. None is qualified here.",
+      "stimulus": {
+        "auth_mode": "oauth", "upstream_mode": "grok_build", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-b",
+          "request": {
+            "method": "POST", "target": "/v1/responses",
+            "headers": [["Content-Type", "application/json"]],
+            "body": "{\"model\":\"synthetic-model\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_video\",\"video_url\":\"https://synthetic.invalid/video\",\"synthetic_timestamp_ms\":17}]}]}",
+            "text_frames": []
+          },
+          "responses": []
+        }]
+      },
+      "assertions": ["nested_video_or_unknown_shape_not_silently_dropped", "request_scoped_rejection_before_send_or_keep_route_blocked", "no_video_support_inferred_from_proxy_URL"],
+      "expected": {"kind":"blocked_control","scope":"REQUEST","classified_status":null,"reauthorize":false,"delivery":null,"retry":false,"feature_status":"BLOCKED","reference_contract":"source_runtime_unknown"},
+      "difference": {"status":"decision_required","note":"The shape is explicitly synthetic and potentially unsupported. No video transport, catalog entitlement or production route is invented.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-request-400",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "Invalid request remains REQUEST-scoped; it must not poison a credential.",
+      "source_refs": ["src/mimic/providers/xai/errors.gleam#L13-L35"],
+      "source_requirement": "Qualify the exact status/body-to-runtime scope mapping through assembled ingress, without status-only replay inference.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-a",
+          "request": {"method":"POST","target":"/v1/responses","headers":[["Content-Type","application/json"]],"body":"{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC invalid request\"}","text_frames":[]},
+          "responses": [{"status":400,"headers":[["Content-Type","application/json"]],"body_chunks":["{\"error\":{\"code\":\"invalid_request\",\"message\":\"SYNTHETIC bad input\"}}"],"text_frames":[],"close":null}]
+        }]
+      },
+      "assertions": ["REQUEST_not_CREDENTIAL", "no_credential_disable_refresh_or_failover", "status_body_and_delivery_not_normalized"],
+      "expected": {"kind":"error_scope_control","scope":"REQUEST","classified_status":400,"reauthorize":false,"delivery":"Uncertain","retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"This is a planned scope control, not an evaluated classifier/runtime result.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-request-403-permission",
+      "row_id": "xai-oauth", "primary_case_id": "xai-oauth.final-v1", "mapping_status": "provisional_pending",
+      "description": "A permission/model 403 without a bad-credential marker remains REQUEST-scoped.",
+      "source_refs": ["src/mimic/providers/xai/errors.gleam#L13-L35"],
+      "source_requirement": "Bind the precise permission body and selected model; do not collapse every 403 to credential reauthorization.",
+      "stimulus": {
+        "auth_mode": "oauth", "upstream_mode": "grok_build", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-b",
+          "request": {"method":"POST","target":"/v1/responses","headers":[["Content-Type","application/json"]],"body":"{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC permission\"}","text_frames":[]},
+          "responses": [{"status":403,"headers":[["Content-Type","application/json"]],"body_chunks":["{\"error\":{\"code\":\"permission_denied\",\"message\":\"SYNTHETIC model forbidden\"}}"],"text_frames":[],"close":null}]
+        }]
+      },
+      "assertions": ["REQUEST_not_CREDENTIAL", "permission_403_not_auth_403", "no_credential_disable_refresh_or_failover"],
+      "expected": {"kind":"error_scope_control","scope":"REQUEST","classified_status":403,"reauthorize":false,"delivery":"Uncertain","retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"Same upstream status as the bad-credential control, deliberately different scope and classified status.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-credential-401",
+      "row_id": "xai-api", "primary_case_id": "xai-api.final-v1", "mapping_status": "provisional_pending",
+      "description": "401 is a CREDENTIAL reauthorization control, not a safe replay certificate.",
+      "source_refs": ["src/mimic/providers/xai/errors.gleam#L13-L35", "docs/xai-native-v2.md#L107-L108"],
+      "source_requirement": "Qualify selected-account effects and delivery separately. Bare inference 401 does not prove non-execution.",
+      "stimulus": {
+        "auth_mode": "api_key", "upstream_mode": "xai_api", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-a",
+          "request": {"method":"POST","target":"/v1/responses","headers":[["Content-Type","application/json"]],"body":"{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC auth control\"}","text_frames":[]},
+          "responses": [{"status":401,"headers":[["Content-Type","application/json"]],"body_chunks":["{\"error\":{\"code\":\"unauthorized\",\"message\":\"SYNTHETIC credential denied\"}}"],"text_frames":[],"close":null}]
+        }]
+      },
+      "assertions": ["CREDENTIAL_not_REQUEST", "selected_account_only_reauthorization", "Uncertain_never_status_only_replay_or_failover"],
+      "expected": {"kind":"error_scope_control","scope":"CREDENTIAL","classified_status":401,"reauthorize":true,"delivery":"Uncertain","retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"CREDENTIAL scope and reauthorization are planned semantics; no credentials are acquired or rotated by this adapter.","normalization":[]}
+    },
+    {
+      "id": "final-v1-grok-credential-403-bad-credentials",
+      "row_id": "xai-oauth", "primary_case_id": "xai-oauth.final-v1", "mapping_status": "provisional_pending",
+      "description": "Exact bad-credentials 403 marker proposes credential-scoped 401 classification, unlike permission 403.",
+      "source_refs": ["src/mimic/providers/xai/errors.gleam#L13-L35", "docs/xai-native-v2.md#L107-L108"],
+      "source_requirement": "Bind the precise nested bad-credentials body, selected OAuth account and sanitized classification to the qualified runtime.",
+      "stimulus": {
+        "auth_mode": "oauth", "upstream_mode": "grok_build", "input_protocol": "responses",
+        "transport": "http/1.1", "body_encoding": "utf-8", "content_encoding": "identity",
+        "turns": [{
+          "credential_slot": "synthetic-b",
+          "request": {"method":"POST","target":"/v1/responses","headers":[["Content-Type","application/json"]],"body":"{\"model\":\"synthetic-model\",\"input\":\"SYNTHETIC bad credential control\"}","text_frames":[]},
+          "responses": [{"status":403,"headers":[["Content-Type","application/json"]],"body_chunks":["{\"body\":{\"error\":{\"code\":\"bad-credentials\",\"message\":\"SYNTHETIC access token could not be validated\"}}}"],"text_frames":[],"close":null}]
+        }]
+      },
+      "assertions": ["CREDENTIAL_not_REQUEST", "exact_bad_credentials_marker_maps_403_to_401", "selected_account_only_reauthorization", "Uncertain_never_status_only_replay_or_failover"],
+      "expected": {"kind":"error_scope_control","scope":"CREDENTIAL","classified_status":401,"reauthorize":true,"delivery":"Uncertain","retry":false,"feature_status":"BLOCKED","reference_contract":"qualification_pending"},
+      "difference": {"status":"observation_required","note":"No actual classifier or runtime invocation; expected scope is not an observed failure or permission to retry.","normalization":[]}
+    }
+  ]
+}
