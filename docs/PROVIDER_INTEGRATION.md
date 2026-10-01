@@ -46,7 +46,7 @@ an unimplemented provider look supported.
 | Claude | `api_key`, `oauth` | Messages JSON/SSE, count_tokens, configured PKCE login/refresh, bounded model policies | Full CPA client profile/cloaking and quota-scope fidelity |
 | Codex | `oauth` | Responses buffered/SSE, compact; independently opt-in HTTP and WS continuation | Native sparse Responses-lite and WS-lite fidelity |
 | xAI | `api_key` | Native Responses buffered/SSE, compact, supported function/namespace tools | Gateway OAuth, HTTP continuation, physical WS, full media/custom tools |
-| Devin | `session_token` | Experimental numeric-loopback buffered Chat; expanded native codec imported | Remote endpoints, Messages route, client streaming, gateway status/catalog/enrollment workflows |
+| Devin | `session_token` | Experimental numeric-loopback Chat JSON/SSE with bounded native projection | Remote endpoints, Messages/Responses routes, exact trailer fidelity, gateway status/catalog/enrollment workflows |
 | Kimi | `api_key`, `oauth` | Native Responses JSON/SSE, Chat JSON/SSE, Messages JSON/SSE, supported tools/thinking/images, device enrollment/refresh | Compact, opaque continuation, WS, lossy CPA repairs and unsupported media |
 | Generic Kimi | `api_key` | Separate `openai-compatible-kimi` Chat JSON/SSE, supported text/images/tools without native transforms | OAuth, native Kimi policy and unsupported media |
 

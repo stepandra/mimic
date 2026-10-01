@@ -192,9 +192,12 @@ def main():
                 status, value = call()
                 assert status == 200 and value["choices"][0]["message"]["content"] == TEXT
                 assert (primary.requests, fallback.accepts) == (1, 0)
-                # Root remains buffered only; registry/native opt-in is not SSE.
+                # F23 admits Chat SSE. Responses stays unsupported; keep the
+                # pre-I/O safety assertion without denying the new Chat route.
                 before = primary.accepts
-                assert call(dict(payload, stream=True))[0] == 422
+                assert BASE["request"](
+                    port, "POST", "/v1/responses", dict(payload, stream=True)
+                )[0] == 422
                 assert primary.accepts == before and fallback.accepts == 0
             # Account selection is fair across different requests. A healthy
             # backup on a later call is NOT a replay of the preceding call.

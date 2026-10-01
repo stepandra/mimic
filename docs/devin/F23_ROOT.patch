@@ -1,0 +1,55 @@
+# F23 admission proposal ONLY; not applied by this worker.
+# Base: 96e68387c309027baf58bd010c817b968d81ec2e (umbrella5-f22-local).
+# Preimages:
+# src/mimic/gateway.gleam d0fe0c567c827749f6f645865af2fc1f12ad18648fd30011962d9fa393dbcd1d
+# docs/devin/f22_local_cli.py 9538f62a9a6e0db004aa1fb59434d7da1b6fb5c31e09a620a8366e3829f3f90e
+# F22's streaming denial remains a pre-I/O safety assertion on an unsupported
+# Responses route; F23's separate actual-root script qualifies admitted Chat SSE.
+diff --git a/src/mimic/gateway.gleam b/src/mimic/gateway.gleam
+--- a/src/mimic/gateway.gleam
++++ b/src/mimic/gateway.gleam
+@@ -39,6 +39,7 @@
+ import mimic/providers/contracts
+ import mimic/providers/devin/auth as devin_auth
+ import mimic/providers/devin/bridge as devin
++import mimic/providers/devin/chat_gateway as devin_chat
+ import mimic/providers/kimi/adapter as kimi
+ import mimic/providers/kimi/models as kimi_models
+ import mimic/providers/kimi/oauth as kimi_oauth
+@@ -405,7 +406,7 @@
+           ),
+         )
+       }
+-      #("devin", _) -> list.first(devin.models()) |> sanitized
++      #("devin", model) -> devin_chat.registration(model) |> sanitized
+       #("xai", model) ->
+         xai_models.registration_for(
+           model,
+@@ -660,6 +661,8 @@
+                 -> serve_kimi(req, config, engine, request, stream)
+                 "openai-compatible-kimi", "chat/completions", False ->
+                   serve_kimi_compat(config, engine, request)
++                "devin", "generate", True ->
++                  devin_chat.serve(req, engine, None, request)
+                 "devin", "generate", False ->
+                   case devin.execute(engine, None, request) {
+                     Ok(body) -> reply(200, body, "application/json")
+diff --git a/docs/devin/f22_local_cli.py b/docs/devin/f22_local_cli.py
+--- a/docs/devin/f22_local_cli.py
++++ b/docs/devin/f22_local_cli.py
+@@ -192,9 +192,13 @@
+                 status, value = call()
+                 assert status == 200 and value["choices"][0]["message"]["content"] == TEXT
+                 assert (primary.requests, fallback.accepts) == (1, 0)
+-                # Root remains buffered only; registry/native opt-in is not SSE.
++                # F23 explicitly admits Chat SSE. Keep this pre-I/O safety
++                # gate on Responses, which Devin does NOT support in F23.
++                # The F23 actual-root script owns the Chat SSE positive.
+                 before = primary.accepts
+-                assert call(dict(payload, stream=True))[0] == 422
++                assert BASE["request"](
++                    port, "POST", "/v1/responses", dict(payload, stream=True)
++                )[0] == 422
+                 assert primary.accepts == before and fallback.accepts == 0
+             # Account selection is fair across different requests. A healthy
+             # backup on a later call is NOT a replay of the preceding call.

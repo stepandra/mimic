@@ -40,6 +40,7 @@ import mimic/providers/codex/response as codex_response
 import mimic/providers/contracts
 import mimic/providers/devin/auth as devin_auth
 import mimic/providers/devin/bridge as devin
+import mimic/providers/devin/chat_gateway as devin_chat
 import mimic/providers/kimi/adapter as kimi
 import mimic/providers/kimi/models as kimi_models
 import mimic/providers/kimi/oauth as kimi_oauth
@@ -407,7 +408,7 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
           ),
         )
       }
-      #("devin", _) -> list.first(devin.models()) |> sanitized
+      #("devin", model) -> devin_chat.registration(model) |> sanitized
       #("xai", model) ->
         xai_models.registration_for(
           model,
@@ -662,6 +663,8 @@ fn dispatch(
                 -> serve_kimi(req, config, engine, request, stream)
                 "openai-compatible-kimi", "chat/completions", _ ->
                   serve_kimi_compat(req, config, engine, request, stream)
+                "devin", "generate", True ->
+                  devin_chat.serve(req, engine, None, request)
                 "devin", "generate", False ->
                   case devin.execute(engine, None, request) {
                     Ok(body) -> reply(200, body, "application/json")
