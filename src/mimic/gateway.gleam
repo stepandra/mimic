@@ -23,6 +23,7 @@ import mimic/gateway/refresh
 import mimic/gateway/websocket
 import mimic/ingress/keys
 import mimic/ir
+import mimic/protocol/chat/http as chat_http
 import mimic/protocol/chat/stream as chat_stream
 import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream as responses_stream
@@ -43,6 +44,7 @@ import mimic/providers/kimi/adapter as kimi
 import mimic/providers/kimi/models as kimi_models
 import mimic/providers/kimi/oauth as kimi_oauth
 import mimic/providers/kimi/request as kimi_request
+import mimic/providers/kimi_compat/adapter as kimi_compat_adapter
 import mimic/providers/kimi_compat/request as kimi_compat
 import mimic/providers/registry
 import mimic/providers/runtime
@@ -658,8 +660,8 @@ fn dispatch(
                 | "kimi", "chat/completions", _
                 | "kimi", "messages", False
                 -> serve_kimi(req, config, engine, request, stream)
-                "openai-compatible-kimi", "chat/completions", False ->
-                  serve_kimi_compat(config, engine, request)
+                "openai-compatible-kimi", "chat/completions", _ ->
+                  serve_kimi_compat(req, config, engine, request, stream)
                 "devin", "generate", False ->
                   case devin.execute(engine, None, request) {
                     Ok(body) -> reply(200, body, "application/json")
@@ -1019,6 +1021,48 @@ fn selected_base_path(
 /// Generic Kimi is a separate API-key/native-Chat provider. It must not pass
 /// through native Kimi model restoration, thinking policy or device identity.
 fn serve_kimi_compat(
+  req: Request(mist.Connection),
+  config: Config,
+  engine: runtime.Runtime,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
+  case streaming {
+    False -> serve_kimi_compat_buffered(config, engine, request)
+    True -> {
+      let adapter =
+        kimi_compat.http_at(
+          fn(context) { selected_base_path(config, context) },
+          None,
+        )
+      case runtime.open(engine, adapter, request) {
+        Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, _))
+        | Error(contracts.Failure(
+            contracts.InvalidConfiguration,
+            contracts.NotSent,
+            _,
+          )) -> reject(422, "unsupported generic Kimi request")
+        Error(_) -> reject(503, "provider unavailable")
+        Ok(opened) ->
+          case chat_http.open_sse(opened.status, opened.headers) {
+            Ok(_) ->
+              stream_encoded(req, opened, fn(response, emit) {
+                kimi_compat_adapter.run_chat_for(response, request, fn(event) {
+                  emit(chat_stream.encode_event(event))
+                })
+                |> result.map(fn(_) { Nil })
+              })
+            Error(_) -> {
+              runtime.cancel(opened.stream)
+              reject(502, "invalid upstream response")
+            }
+          }
+      }
+    }
+  }
+}
+
+fn serve_kimi_compat_buffered(
   config: Config,
   engine: runtime.Runtime,
   request: contracts.Request,

@@ -48,7 +48,7 @@ an unimplemented provider look supported.
 | xAI | `api_key` | Native Responses buffered/SSE, compact, supported function/namespace tools | Gateway OAuth, HTTP continuation, physical WS, full media/custom tools |
 | Devin | `session_token` | Experimental numeric-loopback buffered Chat; expanded native codec imported | Remote endpoints, Messages route, client streaming, gateway status/catalog/enrollment workflows |
 | Kimi | `api_key`, `oauth` | Native Responses JSON/SSE, Chat JSON/SSE, buffered Messages, supported tools/thinking/images, device enrollment/refresh | Messages SSE, compact, opaque continuation, WS, lossy CPA repairs and unsupported media |
-| Generic Kimi | `api_key` | Separate `openai-compatible-kimi` buffered Chat, supported text/images/tools without native transforms | OAuth, streaming, native Kimi policy and unsupported media |
+| Generic Kimi | `api_key` | Separate `openai-compatible-kimi` Chat JSON/SSE, supported text/images/tools without native transforms | OAuth, native Kimi policy and unsupported media |
 
 `GET /v1/models` lists configured, supported models rather than claiming a live
 provider catalog. Client authentication is checked before dispatch; revocation

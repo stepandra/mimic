@@ -1,11 +1,12 @@
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import mimic/providers/contracts
 import mimic/providers/kimi/models
 import mimic/providers/kimi_compat/request
 import mimic/providers/registry
-import mimic/types.{type Capture}
+import mimic/types.{type Capture, Header}
 
 pub fn native_and_generic_models_coexist_in_either_order_test() {
   let assert Ok(native) = models.registration("kimi-k2.8")
@@ -86,6 +87,13 @@ pub fn generic_duplicate_model_is_rejected_before_raw_forward_test() {
 
 /// Reflect actual ingress: no inferred capabilities in Request.required.
 fn prepare_native(body: String) -> Result(Capture, contracts.Failure) {
+  prepare_mode(body, contracts.Buffered)
+}
+
+fn prepare_mode(
+  body: String,
+  mode: contracts.Mode,
+) -> Result(Capture, contracts.Failure) {
   request.prepare_at(
     "/v1",
     contracts.Context(
@@ -102,7 +110,7 @@ fn prepare_native(body: String) -> Result(Capture, contracts.Failure) {
       "kimi-k2.8",
       "chat",
       "chat/completions",
-      contracts.Buffered,
+      mode,
       [],
       "synthetic",
       None,
@@ -111,17 +119,24 @@ fn prepare_native(body: String) -> Result(Capture, contracts.Failure) {
   )
 }
 
+fn streaming_body(body: String) -> String {
+  "{\"stream\":true," <> string.drop_start(body, 1)
+}
+
 fn unsupported_before_io(body: String) {
-  case prepare_native(body) {
-    Error(failure) ->
-      failure
-      |> should.equal(contracts.Failure(
-        contracts.Unsupported,
-        contracts.NotSent,
-        None,
-      ))
-    Ok(_) -> panic as "Unsupported content produced an upstream request plan"
-  }
+  list.each(
+    [
+      #(body, contracts.Buffered),
+      #(streaming_body(body), contracts.Streaming),
+    ],
+    fn(pair) {
+      let #(body, mode) = pair
+      prepare_mode(body, mode)
+      |> should.equal(
+        Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, None)),
+      )
+    },
+  )
 }
 
 pub fn generic_audio_with_no_required_capabilities_fails_before_io_test() {
@@ -216,6 +231,95 @@ pub fn generic_malformed_content_or_disguised_audio_is_rejected_test() {
         "{\"model\":\"kimi-k2.8\",\"messages\":[{\"role\":\"tool\",\"tool_call_id\":\"call_synthetic\",\"content\":"
         <> content
         <> "}]}",
+      )
+    },
+  )
+}
+
+pub fn generic_stream_registration_is_distinct_and_api_key_only_test() {
+  let assert Ok(model) = request.registration("kimi-k2.8")
+  model.provider |> should.equal("openai-compatible-kimi")
+  model.auth_modes |> should.equal(["api_key"])
+  model.protocols |> should.equal(["chat"])
+  model.operations |> should.equal(["chat/completions"])
+  model.capabilities
+  |> should.equal([
+    contracts.Buffer,
+    contracts.Stream,
+    contracts.Tools,
+    contracts.Images,
+  ])
+}
+
+pub fn generic_stream_mode_must_match_the_native_body_test() {
+  let body =
+    "{\"model\":\"kimi-k2.8\",\"messages\":[{\"role\":\"user\",\"content\":\"synthetic\"}]}"
+  prepare_mode(body, contracts.Buffered) |> should.be_ok
+  prepare_mode(body, contracts.Streaming) |> should.be_error
+  let false_body = "{\"stream\":false," <> string.drop_start(body, 1)
+  prepare_mode(false_body, contracts.Buffered) |> should.be_ok
+  prepare_mode(false_body, contracts.Streaming) |> should.be_error
+  let true_body = streaming_body(body)
+  prepare_mode(true_body, contracts.Buffered) |> should.be_error
+  let assert Ok(plan) = prepare_mode(true_body, contracts.Streaming)
+  plan.body |> should.equal(true_body)
+  plan.target |> should.equal("/v1/chat/completions")
+  list.find(plan.headers, fn(header) { header.name == "Accept" })
+  |> should.equal(Ok(Header("Accept", "text/event-stream")))
+}
+
+pub fn generic_stream_preserves_native_options_tools_images_and_opaque_fields_test() {
+  let body =
+    "{\"model\":\"kimi-k2.8\",\"stream\":true,\"stream_options\":{\"include_usage\":true,\"vendor\":42},\"temperature\":0.2,\"top_p\":0.8,\"max_tokens\":64,\"tool_choice\":\"auto\",\"parallel_tool_calls\":false,\"response_format\":{\"type\":\"json_object\"},\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"audio\",\"parameters\":{\"type\":\"object\",\"properties\":{\"audio\":{\"type\":\"string\"}}}}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic 思考🌍\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\",\"detail\":\"low\"}}]},{\"role\":\"assistant\",\"content\":null,\"reasoning_content\":\"native\",\"tool_calls\":[{\"id\":\"call_synthetic\",\"type\":\"function\",\"function\":{\"name\":\"audio\",\"arguments\":\"{\\\"model\\\":\\\"kimi-for-coding\\\"}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"call_synthetic\",\"content\":\"synthetic result\"}],\"thinking\":{\"type\":\"opaque\"},\"vendor\":{\"model\":\"kimi-for-coding\",\"audio\":{\"type\":\"input_audio\"}}}"
+  let assert Ok(plan) = prepare_mode(body, contracts.Streaming)
+  plan.body |> should.equal(body)
+  list.any(plan.headers, fn(header) {
+    string.starts_with(string.lowercase(header.name), "x-msh-")
+  })
+  |> should.be_false
+}
+
+pub fn generic_stream_rejects_native_identity_state_and_unregistered_capabilities_test() {
+  let body =
+    "{\"model\":\"kimi-k2.8\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"synthetic\"}]}"
+  let context =
+    contracts.Context(
+      request.provider,
+      "api_key",
+      "compat-account",
+      "http://127.0.0.1:8000",
+      "compat-session",
+      contracts.ApiKey("synthetic"),
+    )
+  let req =
+    contracts.Request(
+      request.provider,
+      "api_key",
+      "kimi-k2.8",
+      "chat",
+      "chat/completions",
+      contracts.Streaming,
+      [contracts.Stream, contracts.Tools, contracts.Images],
+      "synthetic",
+      None,
+      body,
+    )
+  request.prepare_at("/v1", context, req) |> should.be_ok
+  list.each(
+    [
+      contracts.Request(..req, provider: "kimi"),
+      contracts.Request(..req, auth_mode: "oauth"),
+      contracts.Request(..req, protocol: "responses"),
+      contracts.Request(..req, operation: "messages"),
+      contracts.Request(..req, pinned_account: Some("compat-account")),
+      contracts.Request(..req, required: [contracts.Audio]),
+      contracts.Request(..req, required: [contracts.Continuation]),
+      contracts.Request(..req, required: [contracts.WebSocket]),
+    ],
+    fn(req) {
+      request.prepare_at("/v1", context, req)
+      |> should.equal(
+        Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, None)),
       )
     },
   )

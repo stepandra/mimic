@@ -28,7 +28,12 @@ pub fn registration(model: String) -> Result(registry.Model, String) {
           ["api_key"],
           ["chat"],
           ["chat/completions"],
-          [contracts.Buffer, contracts.Tools, contracts.Images],
+          [
+            contracts.Buffer,
+            contracts.Stream,
+            contracts.Tools,
+            contracts.Images,
+          ],
         ),
       )
   }
@@ -62,14 +67,18 @@ pub fn prepare_at(
       && request.auth_mode == "api_key"
       && request.protocol == "chat"
       && request.operation == "chat/completions"
-      && request.mode == contracts.Buffered
       && request.pinned_account == None
       && context.account != ""
       && context.session_key != ""
       && request.session != ""
       && list.all(request.required, fn(capability) {
         list.contains(
-          [contracts.Buffer, contracts.Tools, contracts.Images],
+          [
+            contracts.Buffer,
+            contracts.Stream,
+            contracts.Tools,
+            contracts.Images,
+          ],
           capability,
         )
       }),
@@ -114,7 +123,11 @@ pub fn prepare_at(
       openai.decode_request(request.body) |> result.replace_error(Nil),
     )
     use _ <- result.try(check(
-      decoded.model == request.model && decoded.stream != Some(True),
+      decoded.model == request.model
+      && case request.mode {
+        contracts.Buffered -> decoded.stream != Some(True)
+        contracts.Streaming -> decoded.stream == Some(True)
+      },
     ))
     // This adapter is native Chat passthrough, not a multimodal translator.
     // Unsupported audio and server-side state must not look like text success.
@@ -147,7 +160,10 @@ pub fn prepare_at(
         Header("Host", host),
         Header("Authorization", "Bearer " <> token),
         Header("Content-Type", "application/json"),
-        Header("Accept", "application/json"),
+        Header("Accept", case request.mode {
+          contracts.Buffered -> "application/json"
+          contracts.Streaming -> "text/event-stream"
+        }),
         Header("Accept-Encoding", "identity"),
         Header("Content-Length", int.to_string(string.byte_size(request.body))),
       ],
