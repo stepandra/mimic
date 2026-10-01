@@ -28,6 +28,7 @@ chmod 700 "$codex_state"
 "$GLEAM" run -m mimic/providers/codex/local -- "$codex_state"
 "$GLEAM" run -m responses_scenario
 "$GLEAM" run -m devin_scenarios
+GLEAM="$GLEAM" python3 docs/devin/f22_local_cli.py
 "$GLEAM" run -m gateway_websocket_test -- --strict
 GLEAM="$GLEAM" python3 scripts/smoke-gateway.py
 GLEAM="$GLEAM" python3 scripts/smoke-http-providers.py
@@ -46,6 +47,7 @@ chmod 700 "$state"
 "$GLEAM" run -m claude_runtime_v4_test -- restore "$state"
 
 "$GLEAM" export erlang-shipment
+python3 docs/devin/f22_local_cli.py --shipment build/erlang-shipment
 python3 scripts/smoke-gateway.py --shipment build/erlang-shipment
 python3 scripts/smoke-http-providers.py --shipment build/erlang-shipment
 python3 scripts/smoke-enrollment.py --shipment build/erlang-shipment

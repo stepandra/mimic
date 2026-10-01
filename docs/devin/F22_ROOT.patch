@@ -1,0 +1,19 @@
+diff --git a/scripts/verify-integration.sh b/scripts/verify-integration.sh
+--- a/scripts/verify-integration.sh
++++ b/scripts/verify-integration.sh
+@@ -31,6 +31,7 @@ chmod 700 "$codex_state"
+ "$GLEAM" run -m mimic/providers/codex/local -- "$codex_state"
+ "$GLEAM" run -m responses_scenario
+ "$GLEAM" run -m devin_scenarios
++GLEAM="$GLEAM" python3 docs/devin/f22_local_cli.py
+ "$GLEAM" run -m gateway_websocket_test -- --strict
+ GLEAM="$GLEAM" python3 scripts/smoke-gateway.py
+ GLEAM="$GLEAM" python3 scripts/smoke-http-providers.py
+@@ -54,6 +55,7 @@ chmod 700 "$state"
+ "$GLEAM" run -m claude_runtime_v4_test -- restore "$state"
+ 
+ "$GLEAM" export erlang-shipment
++python3 docs/devin/f22_local_cli.py --shipment build/erlang-shipment
+ python3 scripts/smoke-gateway.py --shipment build/erlang-shipment
+ python3 scripts/smoke-http-providers.py --shipment build/erlang-shipment
+ python3 scripts/smoke-enrollment.py --shipment build/erlang-shipment
