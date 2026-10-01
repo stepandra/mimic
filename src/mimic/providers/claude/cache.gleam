@@ -181,11 +181,19 @@ pub fn validate(body: ir.Value) -> Result(Summary, String) {
     None -> Ok(Nil)
     Some(_) -> Error("Claude automatic top-level caching is not supported")
   })
-  let tools = array_field(body, "tools")
-  let system = array_field(body, "system")
-  let messages =
-    array_field(body, "messages")
-    |> list.flat_map(fn(message) { array_field(message, "content") })
+  use tools <- result.try(protocol_array(body, "tools"))
+  use system <- result.try(protocol_content(body, "system"))
+  use messages <- result.try(protocol_array(body, "messages"))
+  use messages <- result.try(
+    list.try_map(messages, fn(message) {
+      use _ <- result.try(case ir.field(message, "cache_control") {
+        None -> Ok(Nil)
+        Some(_) -> Error("Unsupported Claude message-level cache host")
+      })
+      protocol_content(message, "content")
+    }),
+  )
+  let messages = list.flatten(messages)
   let blocks = list.append(tools, list.append(system, messages))
   use ttls <- result.try(list.try_map(blocks, cache_ttl))
   let ttls =
@@ -201,6 +209,25 @@ pub fn validate(body: ir.Value) -> Result(Summary, String) {
       use _ <- result.try(check_order(ttls, False))
       Ok(Summary(list.length(ttls), list.contains(ttls, "1h")))
     }
+  }
+}
+
+fn protocol_array(body: ir.Value, key: String) {
+  case ir.field(body, key) {
+    None -> Ok([])
+    Some(ir.Array(items)) -> {
+      use _ <- result.try(list.try_map(items, ir.as_object))
+      Ok(items)
+    }
+    _ -> Error("Unsupported Claude cache protocol array")
+  }
+}
+
+fn protocol_content(body: ir.Value, key: String) {
+  case ir.field(body, key) {
+    None | Some(ir.String(_)) -> Ok([])
+    Some(ir.Array(_)) -> protocol_array(body, key)
+    _ -> Error("Unsupported Claude cache protocol content")
   }
 }
 

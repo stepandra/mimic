@@ -147,13 +147,17 @@ fn run_operation(
           "application/json",
           fixtures.compact,
         )
-        _, _ -> #("text/event-stream", case continuation_replayed {
-          True ->
-            fixtures.sse()
-            |> string.replace("resp_synthetic", "resp_second")
-            |> string.replace("call_synthetic", "call_second")
-          False -> fixtures.sse()
-        })
+        _, _ -> #(
+          "text/event-stream",
+          case continuation_replayed {
+            True ->
+              fixtures.sse()
+              |> string.replace("resp_synthetic", "resp_second")
+              |> string.replace("call_synthetic", "call_second")
+            False -> fixtures.sse()
+          }
+            |> string.replace("gpt-5.5", model_id(operation)),
+        )
       }
       http_response.new(status)
       |> http_response.set_header("content-type", content_type)
@@ -224,7 +228,8 @@ fn execute(
       )
     }),
   )
-  use model <- result.try(models.lookup(models.pinned(), "gpt-5.5"))
+  let model_id = model_id(operation)
+  use model <- result.try(models.lookup(models.pinned(), model_id))
   use registration <- result.try(adapter.registration(model))
   use registry <- result.try(registry.new([registration]) |> safe_error)
   let accounts =
@@ -236,7 +241,7 @@ fn execute(
         origin,
         fleet.LocalLoopback,
         1,
-        ["gpt-5.5"],
+        [model_id],
         credentials.Refreshable(
           contracts.Refresh(fn(_, _) { Error(contracts.RefreshUnsupported) }),
         ),
@@ -283,14 +288,14 @@ fn exercise(
     contracts.Request(
       "codex",
       "oauth",
-      "gpt-5.5",
+      model_id(operation),
       "responses",
       operation,
       contracts.Buffered,
       [],
       "synthetic-session",
       None,
-      fixtures.request,
+      string.replace(fixtures.request, "gpt-5.5", model_id(operation)),
     )
   use response <- result.try(runtime.open(runtime, http, req) |> safe_error)
   use prepared <- result.try(take_plan(plans, response.account))
@@ -313,7 +318,13 @@ fn exercise(
     codex_response.Completed(completion) -> Ok(completion)
     _ -> Error("synthetic provider did not complete")
   })
-  use expected <- result.try(responses.decode_response(fixtures.completed))
+  use expected <- result.try(
+    responses.decode_response(string.replace(
+      fixtures.completed,
+      "gpt-5.5",
+      model_id(operation),
+    )),
+  )
   use _ <- result.try(check(
     completion.response == expected,
     "synthetic decoded response mismatch",
@@ -333,7 +344,11 @@ fn exercise(
       continuing,
       contracts.Request(
         ..req,
-        body: fixtures.continuation,
+        body: string.replace(
+          fixtures.continuation,
+          "gpt-5.5",
+          model_id(operation),
+        ),
         pinned_account: Some(response.account),
       ),
     )
@@ -487,6 +502,13 @@ fn exercise(
   Ok(
     "SYNTHETIC Codex loopback runtime/shared-codec passed: configured origin/path, private account header, validated SSE terminal, tool/reasoning/usage preservation, account-pinned HTTP continuation, compact codec, idempotent cancellation, no uncertain-send replay, zero leases. No live provider, WS transport or assembled-ingress claim.",
   )
+}
+
+fn model_id(operation: String) -> String {
+  case operation {
+    "responses/lite" -> "gpt-5.6-sol"
+    _ -> "gpt-5.5"
+  }
 }
 
 fn observed(

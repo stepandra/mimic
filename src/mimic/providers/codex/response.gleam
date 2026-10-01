@@ -7,6 +7,7 @@ import gleam/result
 import mimic/dialect/responses
 import mimic/ir
 import mimic/protocol/responses/http
+import mimic/protocol/responses/sparse
 import mimic/protocol/responses/stream
 import mimic/providers/codex/normalize
 import mimic/providers/codex/request
@@ -24,6 +25,22 @@ pub type Terminal {
   Completed(Completion)
   Unsuccessful(responses.Response)
   RemoteError(ir.Value)
+}
+
+/// Clean-EOF HTTP delivery is not necessarily replay authority. In sparse mode
+/// the body is the projected *wire* response, not a fabricated strict document.
+/// Only completion contains bounded, paired, authoritative replay history.
+pub opaque type Delivery {
+  Delivery(
+    outcome: stream.Outcome,
+    body: Option(ir.Value),
+    completion: Option(Completion),
+    report: Option(sparse.Report),
+  )
+}
+
+type Observed {
+  Observed(terminal: Option(Terminal), body: Option(ir.Value))
 }
 
 pub opaque type Collector {
@@ -82,36 +99,8 @@ pub fn observe(
         stream.terminal_response(event)
         |> result.map_error(fn(_) { "invalid Codex terminal response" }),
       )
-      use _ <- result.try(
-        case
-          ir.field(response.document, "model"),
-          ir.field(prepared.body, "model")
-        {
-          Some(actual), Some(expected) if actual == expected -> Ok(Nil)
-          None, _ -> Ok(Nil)
-          _, _ -> Error("Codex response model does not match request")
-        },
-      )
-      use input <- result.try(ir.required(prepared.body, "input"))
-      use input <- result.try(ir.as_array(input))
-      let history = list.append(input, response.output)
-      // Pair the entire transcript, including completed historical call IDs.
-      use replay <- result.try(
-        responses.request_from_value(normalize.put(
-          prepared.body,
-          "input",
-          ir.Array(history),
-        )),
-      )
-      use calls <- result.try(responses.pair_input(replay, []))
-      use receipt <- result.try(session.completed(
-        prepared.identity,
-        response.id,
-        calls,
-      ))
-      let receipt = session.retain_history(receipt, history)
-      use _ <- result.try(session.replay(receipt))
-      Ok(Some(Completed(Completion(response, receipt))))
+      complete(prepared, response)
+      |> result.map(fn(completion) { Some(Completed(completion)) })
     }
     "response.incomplete" | "response.failed" | "response.cancelled" ->
       stream.terminal_response(event)
@@ -119,6 +108,44 @@ pub fn observe(
     "error" -> Ok(Some(RemoteError(event.document)))
     _ -> Ok(prior)
   }
+}
+
+fn model_matches(
+  prepared: request.Prepared,
+  document: ir.Value,
+) -> Result(Nil, String) {
+  case ir.field(document, "model"), ir.field(prepared.body, "model") {
+    Some(actual), Some(expected) if actual == expected -> Ok(Nil)
+    None, _ -> Ok(Nil)
+    _, _ -> Error("Codex response model does not match request")
+  }
+}
+
+fn complete(
+  prepared: request.Prepared,
+  response: responses.Response,
+) -> Result(Completion, String) {
+  use _ <- result.try(model_matches(prepared, response.document))
+  use input <- result.try(ir.required(prepared.body, "input"))
+  use input <- result.try(ir.as_array(input))
+  let history = list.append(input, response.output)
+  // Pair the entire transcript, including completed historical call IDs.
+  use replay <- result.try(
+    responses.request_from_value(normalize.put(
+      prepared.body,
+      "input",
+      ir.Array(history),
+    )),
+  )
+  use calls <- result.try(responses.pair_input(replay, []))
+  use receipt <- result.try(session.completed(
+    prepared.identity,
+    response.id,
+    calls,
+  ))
+  let receipt = session.retain_history(receipt, history)
+  use _ <- result.try(session.replay(receipt))
+  Ok(Completion(response, receipt))
 }
 
 /// Only pass a successful clean-EOF result from shared http.run_fold here.
@@ -262,4 +289,201 @@ pub fn forward(
   }
   runtime.cancel(opened.stream)
   outcome
+}
+
+/// The selected catalog-qualified plan is the sole policy input. A native
+/// marker on a low-level request.prepare plan never weakens the strict codec.
+/// Public HTTP SSE and buffered JSON hydrate exactly as the pinned HTTP handler
+/// and nonstream Execute do; this is distinct from executor transparency.
+pub fn http_policy(prepared: request.Prepared) -> stream.Policy {
+  policy(prepared, sparse.HydrateCompleted)
+}
+
+pub fn executor_policy(prepared: request.Prepared) -> stream.Policy {
+  policy(prepared, sparse.Transparent)
+}
+
+fn policy(
+  prepared: request.Prepared,
+  projection: sparse.Projection,
+) -> stream.Policy {
+  case prepared.response_mode {
+    request.StrictResponses -> stream.Strict
+    request.NativeLiteResponses ->
+      stream.NativeSparse(projection, 8_388_608, 32_768)
+  }
+}
+
+pub fn delivery_body(delivery: Delivery) -> Result(String, String) {
+  case delivery.body {
+    Some(body) -> Ok(ir.stringify(body))
+    None -> Error("Codex upstream returned a remote error")
+  }
+}
+
+pub fn delivery_completion(delivery: Delivery) -> Option(Completion) {
+  delivery.completion
+}
+
+pub fn delivery_report(delivery: Delivery) -> Option(sparse.Report) {
+  delivery.report
+}
+
+pub fn delivery_outcome(delivery: Delivery) -> stream.Outcome {
+  delivery.outcome
+}
+
+/// Both modes use the same pull-driven clean-EOF fold. No terminal WireEvent
+/// report is ever used by emit to construct or publish a continuation.
+pub fn consume_http(
+  opened: runtime.Response,
+  prepared: request.Prepared,
+) -> Result(Delivery, contracts.Failure) {
+  forward_http(opened, prepared, fn(_) { Ok(http.Continue) })
+}
+
+/// Real gateway consumer seam for opaque F11 WireEvents. Validate selected
+/// model before delivery. F11 preserves valid-prefix events on later failure.
+/// Every failure after runtime.open is Started, with no retry/replay permission.
+pub fn forward_http(
+  opened: runtime.Response,
+  prepared: request.Prepared,
+  emit: fn(stream.WireEvent) -> Result(http.Control, String),
+) -> Result(Delivery, contracts.Failure) {
+  let outcome = {
+    use _ <- result.try(case opened.account == prepared.credential_id {
+      True -> Ok(Nil)
+      False -> Error(started(contracts.InvalidConfiguration))
+    })
+    use state <- result.try(
+      http.open_sse_with_policy(
+        opened.status,
+        opened.headers,
+        http_policy(prepared),
+      )
+      |> result.replace_error(started(contracts.InvalidResponse)),
+    )
+    use finished <- result.try(
+      http.run_wire_fold(
+        state,
+        opened.stream,
+        fn(handle) {
+          runtime.next(handle)
+          |> result.map(fn(bytes) {
+            case bytes {
+              None -> None
+              Some(bytes) -> Some(#(bytes, handle))
+            }
+          })
+        },
+        runtime.cancel,
+        Observed(None, None),
+        fn(prior, wire) {
+          use next <- result.try(
+            observe_http(prepared, prior, stream.wire_event(wire))
+            |> result.replace_error("Codex response validation failed"),
+          )
+          use control <- result.try(
+            emit(wire) |> result.replace_error("Codex downstream failed"),
+          )
+          Ok(case control {
+            http.Cancel -> #(Observed(None, None), http.Cancel)
+            http.Continue -> #(next, http.Continue)
+          })
+        },
+      )
+      |> result.map_error(fn(error) {
+        case error {
+          http.Upstream(error) ->
+            contracts.Failure(..error, delivery: contracts.Started)
+          http.Protocol(_) -> started(contracts.InvalidResponse)
+          http.Downstream("Codex response validation failed") ->
+            started(contracts.InvalidResponse)
+          http.Downstream(_) -> started(contracts.Cancelled)
+        }
+      }),
+    )
+    use _ <- result.try(case finished {
+      #(stream.Cancelled, None, Observed(None, None)) ->
+        Error(started(contracts.Cancelled))
+      _ -> Ok(Nil)
+    })
+    finish_http(prepared, finished.0, finished.1, finished.2)
+    |> result.replace_error(started(contracts.InvalidResponse))
+  }
+  runtime.cancel(opened.stream)
+  outcome
+}
+
+fn observe_http(
+  prepared: request.Prepared,
+  prior: Observed,
+  event: stream.Event,
+) -> Result(Observed, String) {
+  use _ <- result.try(case ir.field(event.document, "response") {
+    Some(document) -> model_matches(prepared, document)
+    None -> Ok(Nil)
+  })
+  case prepared.response_mode {
+    request.StrictResponses ->
+      observe(prepared, prior.terminal, event)
+      |> result.map(fn(terminal) { Observed(terminal, None) })
+    request.NativeLiteResponses ->
+      case event.name {
+        "response.completed"
+        | "response.incomplete"
+        | "response.failed"
+        | "response.cancelled" ->
+          ir.required(event.document, "response")
+          |> result.map(fn(body) { Observed(None, Some(body)) })
+        // Remote error stays a distinct outcome; buffered ingress rejects it.
+        "error" -> Ok(Observed(None, None))
+        _ -> Ok(prior)
+      }
+  }
+}
+
+fn finish_http(
+  prepared: request.Prepared,
+  outcome: stream.Outcome,
+  report: Option(sparse.Report),
+  observed: Observed,
+) -> Result(Delivery, String) {
+  case prepared.response_mode {
+    request.StrictResponses -> {
+      use terminal <- result.try(finish_observed(outcome, observed.terminal))
+      let #(body, completion) = case terminal {
+        Completed(completed) -> #(
+          Some(completed.response.document),
+          Some(completed),
+        )
+        Unsuccessful(response) -> #(Some(response.document), None)
+        RemoteError(_) -> #(None, None)
+      }
+      Ok(Delivery(outcome, body, completion, None))
+    }
+    request.NativeLiteResponses -> {
+      // ONLY the report returned by run_wire_fold at clean EOF enters this path.
+      // Reconstruction and projection cannot substitute for Authority.
+      use report <- result.try(case report {
+        Some(report) -> Ok(report)
+        None -> Error("Codex sparse response has no clean terminal report")
+      })
+      use completion <- result.try(case outcome, sparse.authority(report) {
+        stream.Completed, sparse.ContinuationEligible(response) ->
+          complete(prepared, response) |> result.map(Some)
+        _, _ -> Ok(None)
+      })
+      use _ <- result.try(case outcome, observed.body {
+        stream.RemoteError, _ -> Ok(Nil)
+        _, Some(_) -> Ok(Nil)
+        _, None -> Error("Codex sparse response has no terminal document")
+      })
+      Ok(Delivery(outcome, observed.body, completion, Some(report)))
+    }
+  }
+}
+
+fn started(reason: contracts.Reason) -> contracts.Failure {
+  contracts.Failure(reason, contracts.Started, None)
 }

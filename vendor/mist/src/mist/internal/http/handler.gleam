@@ -32,7 +32,7 @@ pub fn call(
   handler: Handler,
   sender: Subject(handler.Message(user_message)),
   version: http.HttpVersion,
-) -> Result(State, Result(Nil, String)) {
+) -> Result(#(State, BitArray), Result(Nil, String)) {
   exception.rescue(fn() { handler(req) })
   |> result.map_error(log_and_error(
     _,
@@ -49,6 +49,15 @@ pub fn call(
         Error(Ok(Nil))
       }
       response.Response(body: body, ..) as resp -> {
+        let tail = http.body_tail(req)
+        let request_close = http.connection_has_close(req.headers)
+        // Never drain an unread body just to reuse the socket. Route rejection
+        // and size guards can respond immediately and close before dispatching
+        // anything that might still belong to this request.
+        let resp = case result.is_error(tail) || request_close {
+          True -> http.connection_close(resp)
+          False -> resp
+        }
         case body {
           Bytes(body) ->
             handle_bytes_tree_body(resp, body, req.body, req, version)
@@ -57,6 +66,7 @@ pub fn call(
         }
         |> result.replace_error(Ok(Nil))
         |> result.try(close_or_set_timer(_, req.body, sender))
+        |> result.map(fn(state) { #(state, result.unwrap(tail, <<>>)) })
       }
     }
   })
@@ -100,12 +110,12 @@ fn close_or_set_timer(
 ) -> Result(State, Result(Nil, String)) {
   // If the handler explicitly says to close the connection, we should
   // probably listen to them
-  case response.get_header(resp, "connection") {
-    Ok("close") -> {
+  case http.connection_has_close(resp.headers) {
+    True -> {
       let _ = transport.close(conn.transport, conn.socket)
       Error(Ok(Nil))
     }
-    _ -> {
+    False -> {
       // TODO:  this should be a configuration
       let timer = process.send_after(sender, 10_000, Internal(Close))
       Ok(State(idle_timer: Some(timer)))

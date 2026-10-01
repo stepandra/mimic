@@ -32,7 +32,22 @@ pub fn native() -> Policy {
   Policy(NativeMessages, Conversation, PreserveCache)
 }
 
-/// No optimistic capability claims for future models.
+/// Native placement is caller-owned. An automatic selection here must not be
+/// silently ignored; count operations use the same trusted route selection.
+pub fn validate(selected: Policy) -> Result(Nil, String) {
+  case selected.input, selected.cache, selected.turn {
+    NativeMessages, PreserveCache, _ -> Ok(Nil)
+    NativeMessages, _, _ ->
+      Error("Claude native policy must preserve caller cache placement")
+    _, ApprovedOneHour, Helper ->
+      Error("Claude helper policy does not support approved 1h caching")
+    _, _, _ -> Ok(Nil)
+  }
+}
+
+/// Descriptive families only, not CPA's registry or legacy-system allowlist.
+/// Only the source lexical Haiku predicate gates effort. No model availability,
+/// adaptive-thinking support, budget, placement or entitlement is inferred.
 pub type Model {
   Haiku
   Legacy
@@ -42,16 +57,13 @@ pub type Model {
 }
 
 pub fn model(name: String) -> Model {
+  let supplied = name |> string.trim |> string.lowercase
+  let haiku = string.contains(supplied, "haiku")
   let name =
-    name
-    |> string.trim
-    |> string.lowercase
+    supplied
     |> string.split("/")
     |> list.last
     |> result.unwrap("")
-  let haiku =
-    string.starts_with(name, "claude-")
-    && list.contains(string.split(name, "-"), "haiku")
   let legacy = string.starts_with(name, "claude-3-")
   let progress =
     matches(name, "claude-opus-5-5")
@@ -94,7 +106,7 @@ pub fn normalize(body: ir.Value, policy: Policy) -> Result(ir.Value, String) {
   let active =
     list.contains(
       ["enabled", "adaptive", "auto"],
-      nested(body, "thinking", "type"),
+      normalized_nested(body, "thinking", "type"),
     )
   let body = case policy.input {
     TranslatedMessages -> body |> remove("temperature") |> remove("top_p")
@@ -143,6 +155,11 @@ pub fn nested(body: ir.Value, key: String, child: String) -> String {
   ir.required(body, key)
   |> result.try(fn(value) { ir.string_field(value, child) })
   |> result.unwrap("")
+}
+
+/// Only source predicates use normalized strings; never rewrite caller values.
+pub fn normalized_nested(body: ir.Value, key: String, child: String) -> String {
+  nested(body, key, child) |> string.trim |> string.lowercase
 }
 
 pub fn remove(body: ir.Value, key: String) -> ir.Value {

@@ -11,6 +11,7 @@ import mimic/dialect/responses
 import mimic/ir
 import mimic/providers/kimi/json_guard
 import mimic/providers/kimi/models
+import mimic/providers/kimi/schema
 
 pub fn request(
   body: String,
@@ -39,7 +40,13 @@ pub fn request(
     "responses" -> response_request(value, model)
     _ -> Error("Unsupported Kimi protocol")
   })
-  Ok(ir.stringify(set(value, "model", ir.String(upstream))))
+  // Both historical native executors call these same normalizers. Keep the
+  // dialect's tool envelope distinct, not its schema/temperature policy.
+  use value <- result.try(tools(value, protocol))
+  use _ <- result.try(temperature(value))
+  let body = ir.stringify(set(value, "model", ir.String(upstream)))
+  use _ <- result.try(require(string.byte_size(body) <= 1_048_576))
+  Ok(body)
 }
 
 fn chat(value: ir.Value, model: String, streaming: Bool) {
@@ -77,8 +84,6 @@ fn chat(value: ir.Value, model: String, streaming: Bool) {
     None | Some(ir.Integer(1)) -> Ok(Nil)
     _ -> Error("Kimi supports one choice")
   })
-  use value <- result.try(tools(value, "chat"))
-  use _ <- result.try(temperature(value))
   case streaming {
     False -> {
       use _ <- result.try(absent(value, ["stream_options"]))
@@ -137,18 +142,6 @@ fn response_request(value: ir.Value, model: String) {
       })
     Some(ir.String(_)) -> Ok(Nil)
     _ -> Error("Kimi input is required")
-  })
-  // CPA does not apply Chat tool-schema/temperature rewriting to Responses.
-  use _ <- result.try(case ir.field(value, "tools") {
-    None -> Ok(Nil)
-    Some(ir.Array(items)) ->
-      list.try_each(items, fn(item) {
-        use _ <- result.try(require(
-          ir.field(item, "type") == Some(ir.String("function")),
-        ))
-        Ok(Nil)
-      })
-    _ -> Error("Invalid Kimi tools")
   })
   Ok(value)
 }
@@ -213,38 +206,19 @@ fn tools(value: ir.Value, protocol: String) {
           use function <- result.try(case ir.field(function, "parameters") {
             None -> Ok(function)
             Some(parameters) -> {
-              use _ <- result.try(ir.as_object(parameters))
-              // Inline reference resolution is not claimed. Ref-bearing schemas
-              // fail explicitly instead of stripping definitions and losing meaning.
-              use _ <- result.try(no_refs(parameters))
-              use parameters <- result.try(case ir.field(parameters, "type") {
-                None -> Ok(set(parameters, "type", ir.String("object")))
-                Some(ir.String("object")) -> Ok(parameters)
-                _ -> Error("Kimi tool parameters must be an object schema")
-              })
+              use parameters <- result.try(schema.normalize(parameters))
               Ok(set(function, "parameters", parameters))
             }
           })
-          Ok(set(tool, "function", function))
+          case protocol {
+            "chat" -> Ok(set(tool, "function", function))
+            _ -> Ok(function)
+          }
         }),
       )
       Ok(set(value, "tools", ir.Array(items)))
     }
     _ -> Error("Invalid Kimi tools")
-  }
-}
-
-fn no_refs(value: ir.Value) -> Result(Nil, String) {
-  case value {
-    ir.Object(fields) ->
-      list.try_each(fields, fn(field) {
-        use _ <- result.try(require(
-          !list.contains(["$ref", "$defs", "definitions"], field.0),
-        ))
-        no_refs(field.1)
-      })
-    ir.Array(items) -> list.try_each(items, no_refs)
-    _ -> Ok(Nil)
   }
 }
 

@@ -97,7 +97,7 @@ pub fn tools_schema_names_ids_and_arguments_survive_test() {
   |> should.equal(Some(ir.String("{\"q\":  \"synthetic\"}")))
 }
 
-pub fn schema_references_and_orphan_results_fail_explicitly_test() {
+pub fn local_schema_reference_is_supported_but_orphan_result_is_not_test() {
   transform.request(
     chat(
       ",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"parameters\":{\"$ref\":\"#/$defs/x\",\"$defs\":{\"x\":{\"type\":\"object\"}}}}}]",
@@ -106,7 +106,7 @@ pub fn schema_references_and_orphan_results_fail_explicitly_test() {
     "chat",
     False,
   )
-  |> should.be_error
+  |> should.be_ok
   transform.request(
     "{\"model\":\"kimi-k2.8\",\"messages\":[{\"role\":\"tool\",\"tool_call_id\":\"orphan\",\"content\":\"synthetic\"}]}",
     "kimi-k2.8",

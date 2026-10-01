@@ -20,6 +20,13 @@ pub type Context {
   )
 }
 
+/// Selected-provider policy, not a caller marker. The low-level constructor
+/// stays strict; selected HTTP/WS adapters qualify NativeLite against a catalog.
+pub type ResponseMode {
+  StrictResponses
+  NativeLiteResponses
+}
+
 /// Ephemeral outbound request. Authorization/body must NOT enter the corpus.
 /// Caller uses configured origin; this adapter never selects a live endpoint.
 pub type Prepared {
@@ -30,6 +37,7 @@ pub type Prepared {
     identity: session.Identity,
     credential_id: String,
     pending_calls: List(responses.PendingCall),
+    response_mode: ResponseMode,
   )
 }
 
@@ -40,15 +48,63 @@ pub fn prepare(
   continuation: Option(session.Continuation),
   reasoning_efforts: List(String),
 ) -> Result(Prepared, String) {
+  prepare_mode(
+    body,
+    context,
+    route,
+    continuation,
+    reasoning_efforts,
+    StrictResponses,
+    False,
+  )
+}
+
+/// Additive F13 seam for the selected WS adapter, not raw client admission.
+/// response_mode must already be catalog-qualified. A metadata marker stays
+/// in the frame; only a handshake marker adds the upstream Lite header, as in
+/// the pinned native WS fixture. Existing prepare/HTTP behavior stays strict.
+pub fn prepare_websocket(
+  body: ir.Value,
+  context: Context,
+  continuation: Option(session.Continuation),
+  reasoning_efforts: List(String),
+  response_mode: ResponseMode,
+  header_lite: Bool,
+) -> Result(Prepared, String) {
+  prepare_mode(
+    body,
+    context,
+    routes.Route(routes.Responses, routes.Websocket, True),
+    continuation,
+    reasoning_efforts,
+    response_mode,
+    header_lite,
+  )
+}
+
+fn prepare_mode(
+  body: ir.Value,
+  context: Context,
+  route: routes.Route,
+  continuation: Option(session.Continuation),
+  reasoning_efforts: List(String),
+  response_mode: ResponseMode,
+  header_lite: Bool,
+) -> Result(Prepared, String) {
   use decoded <- result.try(responses.request_from_value(body))
   use marked_lite <- result.try(lite.enabled(body))
-  let is_lite = marked_lite || route.operation == routes.Lite
-  use _ <- result.try(case is_lite, route.operation, route.transport {
-    True, routes.Compact, _ -> Error("Codex compact is not Responses-lite")
-    True, _, routes.Websocket ->
-      Error("Codex Responses-lite WebSocket requires separate support")
-    _, _, _ -> Ok(Nil)
-  })
+  let is_lite =
+    marked_lite
+    || route.operation == routes.Lite
+    || response_mode == NativeLiteResponses
+  use _ <- result.try(
+    case is_lite, route.operation, route.transport, response_mode {
+      True, routes.Compact, _, _ -> Error("Codex compact is not Responses-lite")
+      True, _, routes.Websocket, StrictResponses ->
+        Error("Codex Responses-lite WebSocket requires separate support")
+      _, _, _, _ -> Ok(Nil)
+    },
+  )
   use _ <- result.try(case route.transport, ir.field(body, "generate") {
     routes.Websocket, Some(value) ->
       ir.as_bool(value) |> result.map(fn(_) { Nil })
@@ -188,7 +244,7 @@ pub fn prepare(
       Header("X-Codex-Routing-Hint", hint),
     ]
       |> fn(headers) {
-        case is_lite {
+        case is_lite && { route.transport == routes.Http || header_lite } {
           True -> [
             Header("X-OpenAI-Internal-Codex-Responses-Lite", "true"),
             ..headers
@@ -200,6 +256,7 @@ pub fn prepare(
     identity,
     context.scope.credential_id,
     pending,
+    response_mode,
   ))
 }
 

@@ -1,6 +1,7 @@
 # Final CPA parity wave
 
-**Status: six umbrella threads started; three follow-up umbrellas pending.**
+**Status: implementation resumed on the published integration baseline
+`dd15c610ec39e4f296c30fe02347d0d2b368a629`; the full parity release is not done.**
 
 One numbered slice below means one internal child assignment and one observable
 deliverable. There are **44 slices across the nine-umbrella plan**, including
@@ -8,6 +9,52 @@ the newly discovered F44 boundary defect, not 44 simultaneous jobs.
 Each umbrella runs at most one implementation child at a
 time. The target is closure of the remaining declared compatibility contract,
 not another set of provider libraries waiting for an integration megathread.
+
+## Current completion pass
+
+The original umbrella history and source baseline below are retained. The
+current parent integrates small, tested slices as isolated workers finish;
+there are at most six active implementation assignments, not six additional
+umbrella queues. Root gateway/configuration/CLI and acceptance remain parent-owned.
+
+| Slices | Current implementation/admission state |
+| --- | --- |
+| F01 | Offline contract imported; parent guarded preparation 159 tests passed; eight source obligations and runtime qualification remain unresolved |
+| F02 | Containment runner and native-QA hooks imported; kernel qualification blocked on daemon, approved launcher and pinned image; parent 31 contract tests passed, not native execution |
+| F03 | Qualified reference execution still blocked on approved containment and actual identity/routing evidence |
+| F04 | Review corrections imported; exact closure passed 8 offline + 20 execution tests and synthetic CLI; root/full composition pending, live/native admission blocked |
+| F05 | Actual root operational source workflow passed; raw duplicate-Origin regression passed after F44; composed cancellation returned unexpected 409 and remains under diagnosis |
+| F06 | Imported shared Codex enrollment; focused, source and synthetic browser workflows passed in worker; composed/shipment gates pending |
+| F07 | Core build, 43 focused tests, full root socket workflow and corrected full browser pass; favicon regression 2/2; final scripts synchronized, shared CT fix and shipment pending |
+| F08 | Bounded local workflow admitted in `dd15c610`; live/upstream qualification still outstanding |
+| F09 | Composed focused tests and actual configured gateway/source CLI passed; shipment still pending |
+| F10 | Corrected classification imported; isolated default-off gateway/CLI and fresh-process gates passed; parent classified hook applied but not yet executed |
+| F11 | Corrected shared codec returned, 108 focused tests reported; consumer/destination qualification remains separate |
+| F12 | Strict-stream regression reproduced and fixed in source/shipment; full HTTP-lite root source gate failed idle disconnect cancellation, shared lifecycle fix in progress |
+| F13 | Root off; recovered diagnostic candidate builds, owner-death peer closure fails despite local DOWN; abort reports false success on noproc, hardening/custody design pending; historical 176 passes do not qualify current source |
+| F14–F15 | Source/shipment routes admitted in `dd15c610`; differential/native/live not implied |
+| F16 | Imported; current worker source workflow passed: 94 focused tests, 7 accepted requests and 85 pre-I/O denials; parent shipment pending |
+| F17 | Imported HTTP state-ID enforcement, 31 Gleam + 7 harness tests passed; root pre-runtime guard applied, actual source/shipment zero-refresh proof pending |
+| F18 | Compiled source synchronized, no runtime tests; static review found global-binding partition, explicit-destination/model admission, acquired-revision and oracle gaps; repairs in progress, root off |
+| F19–F21 | Remaining Grok tools and qualified media scope; queued |
+| F22 | Local safety admitted; remote transport qualification remains separate |
+| F23 | Local experimental Chat SSE admitted |
+| F24 | Independent review depth correction applied; 29 focused tests and actual root source workflow passed; shipment pending |
+| F25 | Historical packet passed 90 focused tests; later schema/cardinality/deadline repairs are source-only/unvalidated; nullable standard usage/native-accounting contract awaits user decision |
+| F26 | Queued: Devin enrollment through the shared UI |
+| F27 | Actual parent source workflow passed after fixture corrections: 9 synthetic requests, JSON/SSE parity, selected-account mapping/failover and pre-I/O denials; shipment pending, see docs/devin/F27_ADMISSION.md |
+| F28 | Imported after 105 focused passes; actual parent source status workflow passed 4 positives/12 failure cases, unchanged grants/no fallback/store-busy safety; shipment pending, see docs/devin/F28_ADMISSION.md |
+| F29 | Queued: Devin payload mapping |
+| F30–F34 | Guarded preparation admitted; executable paired acceptance still outstanding |
+| F35–F38 | Native execution still outstanding; pinned artifacts and containment required |
+| F39–F42 | Live acceptance still outstanding; no real-account request made in this pass |
+| F43 | Final qualification/publication not satisfied by an implementation test count |
+| F44 | Four review corrections imported; parent build and 19 socket assertions passed; current root/shipment and full-suite gates pending; see F44_REVIEW_ADMISSION.md for timing-evidence caveat |
+
+Current environment check: the macOS Docker client cannot reach its configured
+OrbStack socket. This is an execution prerequisite, not permission to launch
+uncontained clients or silently weaken the runner. Development and synthetic
+loopback tests continue independently.
 
 ## Baseline and scope
 

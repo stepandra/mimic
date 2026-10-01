@@ -1,13 +1,18 @@
 import gleam/string
 import gleeunit/should
 import mimic
+import mimic/account_ui
 import mimic/gateway
+import mimic/live
+import mimic/providers/devin/status_cli
 
 pub fn help_test() {
   let assert Ok(output) = mimic.dispatch(["help"])
   string.contains(output, "workshop") |> should.be_true
   string.contains(output, "persona") |> should.be_true
   string.contains(output, "serve providers") |> should.be_true
+  string.contains(output, "accounts ui serve") |> should.be_true
+  string.contains(output, "providers status") |> should.be_true
 }
 
 pub fn version_test() {
@@ -34,4 +39,24 @@ pub fn provider_gateway_dispatch_test() {
   |> should.equal(gateway.cli(["serve"]))
   mimic.dispatch(["providers"]) |> should.equal(gateway.cli([]))
   mimic.dispatch(["serve", "providers"]) |> should.be_error
+}
+
+pub fn account_ui_dispatch_test() {
+  mimic.dispatch(["accounts", "ui"]) |> should.equal(account_ui.cli([]))
+  mimic.dispatch(["accounts", "ui", "serve"])
+  |> should.equal(account_ui.cli(["serve"]))
+  mimic.dispatch(["accounts", "ui", "serve"]) |> should.be_error
+}
+
+pub fn provider_status_dispatch_precedes_generic_gateway_test() {
+  mimic.dispatch(["providers", "status"]) |> should.equal(status_cli.cli([]))
+  mimic.dispatch(["providers", "status", "synthetic-missing-config"])
+  |> should.equal(status_cli.cli(["synthetic-missing-config"]))
+  mimic.dispatch(["providers", "status"]) |> should.be_error
+}
+
+pub fn budgeted_scenario_dispatch_test() {
+  mimic.dispatch(["live"]) |> should.equal(live.cli([]))
+  mimic.dispatch(["live", "native"]) |> should.equal(live.cli(["native"]))
+  mimic.dispatch(["live", "native"]) |> should.be_error
 }

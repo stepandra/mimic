@@ -1,0 +1,4 @@
+# Exact-copy synthetic OS fixtures recovered from corrected packet
+# 074a8e620f8e6406ebe21fb97707eef218dde050; paths are repository-relative.
+b0b64ed669664e3bc891e40482027211865dfd20145623163dadeb8a72968b11  test/fixtures/claude/f10/cli_process.py
+d00d614f2e7ee1923d9a73435c1378b42c4e56bf508fa84e44968293a7c7482c  test/fixtures/claude/f10/test_cli_process.py

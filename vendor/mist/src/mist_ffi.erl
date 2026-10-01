@@ -2,7 +2,10 @@
 
 -export([binary_match/2, decode_packet/3, decode_atom/1,file_open/1, string_to_int/2, hpack_decode/2,
          hpack_encode/2, hpack_new_max_table_size/2, ets_lookup_element/3, get_path_and_query/1,
-         file_close/1, now/0]).
+         file_close/1, now/0, monotonic_ms/0]).
+
+monotonic_ms() ->
+  erlang:monotonic_time(millisecond).
 
 now() ->
   Timestamp = os:system_time(microsecond),

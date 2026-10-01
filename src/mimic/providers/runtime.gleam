@@ -1,6 +1,7 @@
 import gleam/bit_array
 import gleam/dict.{type Dict}
 import gleam/erlang/process
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -85,6 +86,7 @@ type Message {
     process.Subject(Result(Lease, Failure)),
   )
   Release(Lease, process.Subject(Result(Nil, Failure)))
+  ReleaseOwner(process.Pid, process.Subject(Result(Nil, Failure)))
   Observe(
     Lease,
     Int,
@@ -98,7 +100,13 @@ type Message {
 }
 
 pub opaque type Stream {
-  Stream(subject: process.Subject(GuardMessage), pid: process.Pid)
+  Stream(
+    subject: process.Subject(GuardMessage),
+    pid: process.Pid,
+    execution: process.Pid,
+    runtime: Runtime,
+    deadline_ms: Option(Int),
+  )
 }
 
 /// No pooling: this capability owns one connection, lease and credential
@@ -132,6 +140,8 @@ type StreamMessage {
 
 type GuardMessage {
   PullFor(process.Pid, process.Subject(Result(Read, Failure)))
+  PullUntilFor(process.Pid, Int, process.Subject(Result(Read, Failure)))
+  ExpireFor(process.Pid, process.Subject(Result(Nil, Failure)))
   SendFor(process.Pid, Request, process.Subject(Result(Nil, Failure)))
   CancelFor(process.Pid, process.Subject(Result(Nil, Failure)))
   Adopt(process.Pid, process.Subject(Result(Nil, Failure)))
@@ -139,6 +149,7 @@ type GuardMessage {
   Sent(Result(Nil, Failure))
   Closed(Result(Nil, Failure))
   CancelTimeout
+  DeadlineReached
   GuardDown(process.Down)
 }
 
@@ -158,6 +169,7 @@ type GuardState {
     sending: Option(process.Subject(Result(Nil, Failure))),
     cancelling: Option(process.Subject(Result(Nil, Failure))),
     revoked: List(process.Pid),
+    deadline_ms: Option(Int),
   )
 }
 
@@ -392,7 +404,8 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
       let eligible =
         state.accounts
         |> list.filter(fn(b) {
-          b.account.provider == request.provider
+          process.is_alive(owner)
+          && b.account.provider == request.provider
           && b.account.auth_mode == request.auth_mode
           && list.contains(b.account.models, request.model)
           && result.is_ok(endpoint(state.bindings, b.account, request))
@@ -447,6 +460,17 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
     }
     Release(lease, reply) -> {
       let next = release(state, lease)
+      process.send(reply, Ok(Nil))
+      actor.continue(next)
+    }
+    ReleaseOwner(owner, reply) -> {
+      let next =
+        list.fold(dict.values(state.monitors), state, fn(state, entry) {
+          case entry.2 == owner {
+            True -> release(state, entry.0)
+            False -> state
+          }
+        })
       process.send(reply, Ok(Nil))
       actor.continue(next)
     }
@@ -539,6 +563,35 @@ pub fn open_scoped(
     Result(contracts.Opened(h), Failure),
   request: Request,
 ) -> Result(Response, Failure) {
+  open_scoped_with_deadline(runtime, adapter, open, request, None)
+}
+
+/// Absolute monotonic deadline; a negative BEAM monotonic origin is valid.
+/// One existing execution guard covers acquisition, open and idle/active reads.
+/// Expiry is Cancelled/NotSent before launch, Cancelled/Uncertain after launch.
+pub fn open_until(
+  runtime: Runtime,
+  adapter: Adapter(h),
+  request: Request,
+  deadline_ms: Int,
+) -> Result(Response, Failure) {
+  open_scoped_with_deadline(
+    runtime,
+    adapter,
+    fn(context, _, request) { adapter.open(context, request) },
+    request,
+    Some(deadline_ms),
+  )
+}
+
+fn open_scoped_with_deadline(
+  runtime: Runtime,
+  adapter: Adapter(h),
+  open: fn(contracts.Context, Revision, Request) ->
+    Result(contracts.Opened(h), Failure),
+  request: Request,
+  deadline_ms: Option(Int),
+) -> Result(Response, Failure) {
   open_driver(
     runtime,
     Driver(
@@ -557,12 +610,32 @@ pub fn open_scoped(
       adapter.rejection,
     ),
     request,
+    deadline_ms,
   )
 }
 
 pub fn open_session(
   runtime: Runtime,
   adapter: contracts.SessionAdapter(h),
+  request: Request,
+) -> Result(Session, Failure) {
+  open_session_scoped(
+    runtime,
+    adapter,
+    fn(context, _, request) { adapter.open(context, request) },
+    request,
+  )
+}
+
+/// Session counterpart to open_scoped: replace only the open callback and pass
+/// the authoritative acquired revision unchanged. Provider code must validate
+/// that revision before transport I/O; reading a newer equal-valued credential
+/// is not an equivalent acquisition. Receive/send/cancel retain their ABI.
+pub fn open_session_scoped(
+  runtime: Runtime,
+  adapter: contracts.SessionAdapter(h),
+  open: fn(contracts.Context, Revision, Request) ->
+    Result(contracts.Opened(h), Failure),
   request: Request,
 ) -> Result(Session, Failure) {
   use _ <- result.try(
@@ -574,7 +647,7 @@ pub fn open_session(
   use response <- result.try(open_driver(
     runtime,
     Driver(
-      fn(context, _, request) { adapter.open(context, request) },
+      open,
       fn(handle) {
         adapter.receive(handle)
         |> result.map(fn(pair) {
@@ -592,6 +665,7 @@ pub fn open_session(
       fn(_, _) { None },
     ),
     request,
+    None,
   ))
   Ok(Session(response.stream, response.account))
 }
@@ -644,8 +718,11 @@ fn open_driver(
   runtime: Runtime,
   adapter: Driver(h),
   request: Request,
+  deadline_ms: Option(Int),
 ) -> Result(Response, Failure) {
+  use _ <- result.try(check_deadline(deadline_ms, NotSent))
   use _ <- result.try(registry.resolve(runtime.registry, request))
+  use _ <- result.try(check_deadline(deadline_ms, NotSent))
   let reply = process.new_subject()
   let owner = process.self()
   let pid =
@@ -657,12 +734,20 @@ fn open_driver(
           let execution = process.self()
           let guard =
             process.spawn_unlinked(fn() {
-              guard_execution(owner, runtime.pid, execution, subject, ready)
+              guard_execution(
+                owner,
+                runtime.pid,
+                execution,
+                subject,
+                ready,
+                deadline_ms,
+              )
             })
           process.link(guard)
-          let assert Ok(guard_subject) = process.receive(ready, 5000)
+          let assert Ok(guard_subject) =
+            process.receive(ready, wait_ms(deadline_ms, 5000))
           let selector = process.new_selector() |> process.select(subject)
-          case attempt(runtime, adapter, request, []) {
+          case attempt(runtime, adapter, request, [], deadline_ms) {
             Error(error) -> process.send(reply, Error(error))
             Ok(#(lease, opened, generation)) -> {
               process.send(
@@ -671,7 +756,7 @@ fn open_driver(
                   opened.status,
                   opened.headers,
                   lease.bound.account.id,
-                  Stream(guard_subject, guard),
+                  Stream(guard_subject, guard, execution, runtime, deadline_ms),
                 )),
               )
               stream_loop(
@@ -695,13 +780,22 @@ fn open_driver(
     |> process.select_specific_monitor(monitor, fn(_) {
       Error(Failure(Unavailable, Uncertain, None))
     })
-  let answer = process.selector_receive(selector, 60_000)
-  process.demonitor_process(monitor)
-  case answer {
-    Ok(value) -> value
-    Error(_) -> {
-      process.kill(pid)
-      Error(Failure(Unavailable, Uncertain, None))
+  let answer = process.selector_receive(selector, wait_ms(deadline_ms, 60_000))
+  case expired(deadline_ms) {
+    True -> {
+      kill_execution(runtime, pid)
+      process.demonitor_process(monitor)
+      Error(Failure(Cancelled, Uncertain, None))
+    }
+    False -> {
+      process.demonitor_process(monitor)
+      case answer {
+        Ok(value) -> value
+        Error(_) -> {
+          process.kill(pid)
+          Error(Failure(Unavailable, Uncertain, None))
+        }
+      }
     }
   }
 }
@@ -712,6 +806,7 @@ fn guard_execution(
   execution: process.Pid,
   execution_subject: process.Subject(StreamMessage),
   ready: process.Subject(process.Subject(GuardMessage)),
+  deadline_ms: Option(Int),
 ) -> Nil {
   let subject = process.new_subject()
   let pull_reply = process.new_subject()
@@ -744,6 +839,7 @@ fn guard_execution(
       None,
       None,
       [],
+      deadline_ms,
     ),
     selector,
   )
@@ -753,7 +849,28 @@ fn guard_loop(
   state: GuardState,
   selector: process.Selector(GuardMessage),
 ) -> Nil {
-  case process.selector_receive_forever(selector) {
+  let message = case state.deadline_ms {
+    None -> process.selector_receive_forever(selector)
+    Some(_) ->
+      process.selector_receive(
+        selector,
+        wait_ms(state.deadline_ms, 2_147_483_647),
+      )
+      |> result.unwrap(DeadlineReached)
+  }
+  // Queued late answers never resurrect a capability after the deadline.
+  case expired(state.deadline_ms) {
+    True -> expire_guard(state)
+    False -> handle_guard(state, selector, message)
+  }
+}
+
+fn handle_guard(
+  state: GuardState,
+  selector: process.Selector(GuardMessage),
+  message: GuardMessage,
+) -> Nil {
+  case message {
     Adopt(owner, reply) -> {
       case
         state.pending == None
@@ -796,6 +913,46 @@ fn guard_loop(
         True -> {
           process.send(state.execution_subject, Pull(state.pull_reply))
           guard_loop(GuardState(..state, pending: Some(reply)), selector)
+        }
+        False -> {
+          process.send(reply, Error(Failure(Cancelled, Started, None)))
+          guard_loop(state, selector)
+        }
+      }
+    }
+    PullUntilFor(owner, deadline_ms, reply) -> {
+      case
+        owner == state.owner
+        && state.pending == None
+        && state.sending == None
+        && state.cancelling == None
+      {
+        True -> {
+          let next =
+            GuardState(
+              ..state,
+              deadline_ms: earliest(state.deadline_ms, Some(deadline_ms)),
+              pending: Some(reply),
+            )
+          case expired(next.deadline_ms) {
+            True -> expire_guard(next)
+            False -> {
+              process.send(state.execution_subject, Pull(state.pull_reply))
+              guard_loop(next, selector)
+            }
+          }
+        }
+        False -> {
+          process.send(reply, Error(Failure(Cancelled, Started, None)))
+          guard_loop(state, selector)
+        }
+      }
+    }
+    ExpireFor(owner, reply) -> {
+      case owner == state.owner {
+        True -> {
+          process.send(reply, Ok(Nil))
+          expire_guard(state)
         }
         False -> {
           process.send(reply, Error(Failure(Cancelled, Started, None)))
@@ -858,6 +1015,7 @@ fn guard_loop(
       process.kill(state.execution)
       Nil
     }
+    DeadlineReached -> expire_guard(state)
     GuardDown(down) -> {
       case down.monitor {
         monitor if monitor == state.execution_monitor -> Nil
@@ -873,21 +1031,41 @@ fn guard_loop(
   }
 }
 
+fn expire_guard(state: GuardState) -> Nil {
+  case state.pending {
+    Some(reply) -> process.send(reply, Error(Failure(Cancelled, Started, None)))
+    None -> Nil
+  }
+  case state.sending {
+    Some(reply) -> process.send(reply, Error(Failure(Cancelled, Started, None)))
+    None -> Nil
+  }
+  case state.cancelling {
+    Some(reply) -> process.send(reply, Error(Failure(Cancelled, Started, None)))
+    None -> Nil
+  }
+  // Only this socket-owning execution dies, not a shared refresh worker.
+  process.kill(state.execution)
+}
+
 fn attempt(
   runtime: Runtime,
   adapter: Driver(h),
   request: Request,
   excluded: List(String),
+  deadline_ms: Option(Int),
 ) -> Result(#(Lease, contracts.Opened(h), Revision), Failure) {
+  use _ <- result.try(check_deadline(deadline_ms, NotSent))
   use lease <- result.try(ask(
     runtime.subject,
     runtime.pid,
     fn(reply) { Acquire(request, excluded, process.self(), reply) },
-    5000,
+    wait_ms(deadline_ms, 5000),
   ))
   let account = lease.bound.account
   let outcome = {
     use acquired <- result.try(credentials.acquire_versioned(lease.bound.worker))
+    use _ <- result.try(check_deadline(deadline_ms, NotSent))
     let #(material, generation) = acquired
     let session_key =
       json.array([lease.bound.key, request.session], json.string)
@@ -921,7 +1099,7 @@ fn attempt(
           fn(reply) {
             Observe(lease, opened.status, opened.headers, retry, reply)
           },
-          5000,
+          wait_ms(deadline_ms, 5000),
         )
       {
         Error(error) -> {
@@ -943,10 +1121,20 @@ fn attempt(
     Ok(#(opened, generation)) -> Ok(#(lease, opened, generation))
     Error(error) -> {
       let _ = release_lease(runtime, lease)
-      case retryable(error) && request.pinned_account == None {
+      case
+        retryable(error)
+        && request.pinned_account == None
+        && !expired(deadline_ms)
+      {
         True -> {
           case
-            attempt(runtime, adapter, request, [lease.bound.key, ..excluded])
+            attempt(
+              runtime,
+              adapter,
+              request,
+              [lease.bound.key, ..excluded],
+              deadline_ms,
+            )
           {
             Ok(value) -> Ok(value)
             Error(next) -> Error(select_failure(error, next))
@@ -1110,14 +1298,61 @@ pub fn next(stream: Stream) -> Result(Option(BitArray), Failure) {
   }
 }
 
+/// Tighten, never extend, an execution's absolute deadline. An expired
+/// adopted/revoked handle cannot cancel the current owner's execution.
+pub fn next_until(
+  stream: Stream,
+  deadline_ms: Int,
+) -> Result(Option(BitArray), Failure) {
+  use value <- result.try(read_with_deadline(stream, Some(deadline_ms)))
+  case value {
+    Chunk(bytes) -> Ok(Some(bytes))
+    End -> Ok(None)
+    Idle -> Error(Failure(InvalidResponse, Started, None))
+  }
+}
+
 fn read(stream: Stream) -> Result(Read, Failure) {
+  read_with_deadline(stream, None)
+}
+
+fn read_with_deadline(
+  stream: Stream,
+  requested_deadline: Option(Int),
+) -> Result(Read, Failure) {
+  let deadline_ms = earliest(stream.deadline_ms, requested_deadline)
+  use _ <- result.try(case expired(deadline_ms) {
+    True -> {
+      expire_stream(stream)
+      Error(Failure(Cancelled, Started, None))
+    }
+    False -> Ok(Nil)
+  })
   let answer =
     ask(
       stream.subject,
       stream.pid,
-      fn(reply) { PullFor(process.self(), reply) },
-      10_000,
+      fn(reply) {
+        case deadline_ms {
+          None -> PullFor(process.self(), reply)
+          Some(deadline) -> PullUntilFor(process.self(), deadline, reply)
+        }
+      },
+      wait_ms(deadline_ms, 10_000),
     )
+  case expired(deadline_ms) {
+    True -> {
+      expire_stream(stream)
+      Error(Failure(Cancelled, Started, None))
+    }
+    False -> read_answer(stream, answer)
+  }
+}
+
+fn read_answer(
+  stream: Stream,
+  answer: Result(Read, Failure),
+) -> Result(Read, Failure) {
   case answer {
     Error(error) -> {
       case error.delivery {
@@ -1127,6 +1362,87 @@ fn read(stream: Stream) -> Result(Read, Failure) {
       Error(Failure(..error, delivery: Started))
     }
     Ok(value) -> Ok(value)
+  }
+}
+
+/// At most one second AFTER expiry for process death and coordinator release.
+/// The socket dies with its execution. A stuck coordinator may defer bookkeeping,
+/// but queued acquisitions from a dead execution cannot create a late lease.
+pub const deadline_cleanup_ms = 1000
+
+fn expire_stream(stream: Stream) -> Nil {
+  let until = monotonic_ms() + deadline_cleanup_ms
+  let allowed =
+    ask(
+      stream.subject,
+      stream.pid,
+      fn(reply) { ExpireFor(process.self(), reply) },
+      wait_ms(Some(until), deadline_cleanup_ms),
+    )
+  case allowed, process.is_alive(stream.execution) {
+    Ok(_), _ | _, False ->
+      reap_execution(stream.runtime, stream.execution, until)
+    _, True -> Nil
+  }
+}
+
+fn kill_execution(runtime: Runtime, execution: process.Pid) -> Nil {
+  let until = monotonic_ms() + deadline_cleanup_ms
+  process.kill(execution)
+  reap_execution(runtime, execution, until)
+}
+
+fn reap_execution(runtime: Runtime, execution: process.Pid, until: Int) -> Nil {
+  let monitor = process.monitor(execution)
+  let dead =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_) { Nil })
+    |> process.selector_receive(wait_ms(Some(until), deadline_cleanup_ms))
+  process.demonitor_process(monitor)
+  case dead {
+    Ok(_) -> {
+      let _ =
+        ask(
+          runtime.subject,
+          runtime.pid,
+          fn(reply) { ReleaseOwner(execution, reply) },
+          wait_ms(Some(until), deadline_cleanup_ms),
+        )
+      Nil
+    }
+    // Never make a still-live execution's capacity reusable.
+    Error(_) -> Nil
+  }
+}
+
+fn expired(deadline_ms: Option(Int)) -> Bool {
+  case deadline_ms {
+    None -> False
+    Some(deadline) -> monotonic_ms() >= deadline
+  }
+}
+
+fn check_deadline(
+  deadline_ms: Option(Int),
+  delivery: contracts.Delivery,
+) -> Result(Nil, Failure) {
+  case expired(deadline_ms) {
+    True -> Error(Failure(Cancelled, delivery, None))
+    False -> Ok(Nil)
+  }
+}
+
+fn wait_ms(deadline_ms: Option(Int), maximum: Int) -> Int {
+  case deadline_ms {
+    None -> maximum
+    Some(deadline) -> int.max(0, int.min(maximum, deadline - monotonic_ms()))
+  }
+}
+
+fn earliest(a: Option(Int), b: Option(Int)) -> Option(Int) {
+  case a, b {
+    None, other | other, None -> other
+    Some(a), Some(b) -> Some(int.min(a, b))
   }
 }
 
@@ -1213,6 +1529,9 @@ fn ask(
 
 @external(erlang, "mimic_auth_ffi", "now_ms")
 fn now_ms() -> Int
+
+@external(erlang, "mimic_egress_ffi", "now_ms")
+fn monotonic_ms() -> Int
 
 @external(erlang, "mimic_provider_runtime_ffi", "claim_store")
 fn claim_store(directory: String) -> Result(process.Pid, String)

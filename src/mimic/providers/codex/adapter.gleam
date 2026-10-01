@@ -69,6 +69,34 @@ pub fn prepare(
   capture(context, req, prepared)
 }
 
+/// Syntax/route intent only. These untrusted markers grant neither a capability
+/// nor authority. prepare_native checks the actual selected catalog entry.
+/// There is no public /responses/lite URL; compact cannot select this mode.
+pub fn classify_http(
+  req: contracts.Request,
+  headers: List(Header),
+) -> Result(contracts.Request, String) {
+  use _ <- result.try(case req.provider, req.protocol, req.operation {
+    "codex", "responses", "responses"
+    | "codex", "responses", "responses/lite"
+    | "codex", "responses", "responses/compact"
+    -> Ok(Nil)
+    _, _, _ -> Error("unsupported Codex HTTP operation")
+  })
+  use header_lite <- result.try(lite.header_enabled(headers))
+  use body <- result.try(json_guard.parse(req.body))
+  use body_lite <- result.try(lite.enabled(body))
+  case header_lite || body_lite || req.operation == "responses/lite" {
+    False -> Ok(req)
+    True ->
+      case req.operation {
+        "responses" | "responses/lite" ->
+          Ok(contracts.Request(..req, operation: "responses/lite"))
+        _ -> Error("Codex compact is not Responses-lite")
+      }
+  }
+}
+
 /// Runtime-side composition hook after account selection. Keep the returned
 /// secret-bearing plan ephemeral; its identity binds the HTTP response collector.
 pub fn prepare_native(
@@ -119,6 +147,11 @@ pub fn prepare_native(
   use marked_lite <- result.try(
     lite.enabled(body) |> result.map_error(fn(_) { unsupported() }),
   )
+  let is_lite = marked_lite || operation == routes.Lite
+  use _ <- result.try(case is_lite && !model.responses_lite {
+    True -> Error(unsupported())
+    False -> Ok(Nil)
+  })
   use _ <- result.try(
     lite.validate_modalities(body, model.input_modalities)
     |> result.map_error(fn(_) { unsupported() }),
@@ -162,6 +195,12 @@ pub fn prepare_native(
     config.continuation,
     model.reasoning_efforts,
   )
+  |> result.map(fn(prepared) {
+    codex_request.Prepared(..prepared, response_mode: case is_lite {
+      True -> codex_request.NativeLiteResponses
+      False -> codex_request.StrictResponses
+    })
+  })
   |> result.map_error(fn(_) { unsupported() })
 }
 
@@ -221,7 +260,10 @@ pub fn registration(model: models.Model) -> Result(registry.Model, String) {
       model.slug,
       ["oauth"],
       ["responses"],
-      ["responses", "responses/compact", "responses/lite"],
+      case model.responses_lite {
+        True -> ["responses", "responses/compact", "responses/lite"]
+        False -> ["responses", "responses/compact"]
+      },
       [
         contracts.Buffer,
         contracts.Stream,

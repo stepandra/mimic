@@ -386,9 +386,10 @@ pub fn await_callback(
             }
           None -> None
         }
-        // Pinned Mist gives this direct handler Initial for HTTP/1.x and
-        // Stream for HTTP/2. Recheck this invariant on a Mist/pipeline change:
-        // the connection-process completion wait below is HTTP/1.x only.
+        // Bodyless HTTP/1.x callbacks use Initial. The F44 framing boundary
+        // gives nonempty HTTP/1.x bodies Framed, rejected by the 400 fallback;
+        // HTTP/2 uses Stream and is rejected separately. The connection-process
+        // completion wait below is for the accepted bodyless HTTP/1.x path only.
         case
           req.body.body,
           req.method == http.Get && req.path == redirect.path,

@@ -235,6 +235,8 @@ pub fn physical_ws_wss_api_key_oauth_tools_continuation_test() {
         endpoint.Config(
           ..endpoint.defaults(mode),
           websockets: True,
+          websocket_base: Some(origin <> "/v1"),
+          using_api: True,
           policy: case cert {
             None -> endpoint.LocalMock
             Some(_) -> endpoint.VerifiedTls
@@ -278,18 +280,6 @@ pub fn physical_ws_wss_api_key_oauth_tools_continuation_test() {
       |> should.equal(Ok("{\"text\":\"shell__run\"}"))
       let assert Some(usage) = ir.field(response, "usage")
       ir.field(usage, "total_tokens") |> should.equal(Some(ir.Integer(5)))
-      // No bytes are sent for orphan results or client/account/model changes.
-      adapter.send(handle, req(ctx.auth_mode, orphan)) |> should.be_error
-      adapter.send(
-        handle,
-        c.Request(..req(ctx.auth_mode, follow), session: "other"),
-      )
-      |> should.be_error
-      adapter.send(
-        handle,
-        c.Request(..req(ctx.auth_mode, follow), pinned_account: Some("other")),
-      )
-      |> should.be_error
       process.receive(observed, 0) |> should.be_error
       let assert Ok(handle) = adapter.send(handle, req(ctx.auth_mode, follow))
       let assert Ok(sent) = process.receive(observed, 1000)
@@ -304,9 +294,77 @@ pub fn physical_ws_wss_api_key_oauth_tools_continuation_test() {
       process.receive(observed, 0) |> should.be_error
       process.unlink(server.pid)
       process.send_exit(server.pid)
+      // An Error is terminal. Rejection assertions use independent physical
+      // handles instead of quietly continuing the success socket after Error.
+      list.each(
+        [
+          req(ctx.auth_mode, orphan),
+          c.Request(..req(ctx.auth_mode, follow), session: "other"),
+          c.Request(..req(ctx.auth_mode, follow), pinned_account: Some("other")),
+          c.Request(..req(ctx.auth_mode, follow), model: "grok-4.6"),
+        ],
+        fn(rejected) { rejected_send_closes(cert, mode, ca, rejected) },
+      )
     })
   })
   cleanup(temp)
+}
+
+fn rejected_send_closes(cert, mode, ca, rejected) {
+  let #(server, origin, observed, closed) = peer(cert, "normal")
+  let ctx = context(origin, mode)
+  let config =
+    endpoint.Config(
+      ..endpoint.defaults(mode),
+      websockets: True,
+      websocket_base: Some(origin <> "/v1"),
+      using_api: True,
+      policy: case cert {
+        None -> endpoint.LocalMock
+        Some(_) -> endpoint.VerifiedTls
+      },
+    )
+  let adapter = xai.selected_adapter("synthetic-tenant", config, ca)
+  let assert Ok(opened) = adapter.open(ctx, req(ctx.auth_mode, create))
+  let assert Ok(handle) =
+    adapter.send(opened.handle, req(ctx.auth_mode, create))
+  let #(_, handle) = terminal(adapter, handle)
+  list.each([0, 1, 2], fn(_) { process.receive(observed, 1000) |> should.be_ok })
+  adapter.send(handle, rejected) |> should.be_error
+  // Discard the errored immutable handle. Observe peer closure BEFORE any
+  // second send, cancel, or server teardown could supply the cleanup evidence.
+  process.receive(closed, 1000) |> should.be_ok
+  process.receive(observed, 20) |> should.be_error
+  process.unlink(server.pid)
+  process.send_exit(server.pid)
+}
+
+pub fn missing_or_conflicting_destination_authority_is_not_inferred_test() {
+  let #(server, origin, observed, _) = peer(None, "normal")
+  let ctx = context(origin, endpoint.ApiKey)
+  let missing =
+    endpoint.Config(
+      ..endpoint.defaults(endpoint.ApiKey),
+      websockets: True,
+      policy: endpoint.LocalMock,
+    )
+  list.each(
+    [
+      missing,
+      endpoint.Config(..missing, websocket_base: Some("http://127.0.0.1:1/v1")),
+    ],
+    fn(config) {
+      xai.selected_adapter("synthetic-tenant", config, None).open(
+        ctx,
+        req("api_key", create),
+      )
+      |> should.be_error
+      // Direct adapter open has no credential-acquisition callback at all.
+      process.receive(observed, 20) |> should.be_error
+    },
+  )
+  process.unlink(server.pid)
+  process.send_exit(server.pid)
 }
 
 pub fn malformed_ws_event_and_cross_origin_fail_closed_test() {
@@ -366,6 +424,8 @@ pub fn runtime_rotation_invalidates_physical_xai_socket_test() {
       endpoint.Config(
         ..endpoint.defaults(mode),
         websockets: True,
+        websocket_base: Some(origin <> "/v1"),
+        using_api: True,
         policy: endpoint.LocalMock,
       )
     let assert Ok(model) = models.registration_for("grok-4.7", config)
@@ -428,6 +488,7 @@ pub fn wire_identity_cannot_change_between_namespaces_test() {
     endpoint.Config(
       ..endpoint.defaults(endpoint.ApiKey),
       websockets: True,
+      websocket_base: Some(origin <> "/v1"),
       policy: endpoint.LocalMock,
     )
   let adapter = xai.selected_adapter("tenant", config, None)
@@ -469,6 +530,7 @@ pub fn drain_session(session, attempts) {
 
 pub fn main() {
   physical_ws_wss_api_key_oauth_tools_continuation_test()
+  missing_or_conflicting_destination_authority_is_not_inferred_test()
   malformed_ws_event_and_cross_origin_fail_closed_test()
   runtime_rotation_invalidates_physical_xai_socket_test()
   wire_identity_cannot_change_between_namespaces_test()

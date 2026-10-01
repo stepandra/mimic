@@ -1,13 +1,12 @@
-// MIMIC modification to Mist 6.0.3: reject ambiguous singleton headers and
-// HTTP/1.0 upgrades before the parsed request loses duplicate/version data.
+// MIMIC modifications to Mist 6.0.3: validate raw security/framing headers
+// and retain per-request HTTP/1 body boundaries before route dispatch.
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/erlang/atom.{type Atom}
-import gleam/erlang/charlist.{type Charlist}
-import gleam/erlang/process.{type Selector}
+import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
@@ -16,7 +15,6 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/otp/factory_supervisor as factory
-import gleam/pair
 import gleam/result
 import gleam/string
 import glisten.{type Socket}
@@ -26,6 +24,7 @@ import mist/internal/buffer.{type Buffer, Buffer}
 import mist/internal/clock
 import mist/internal/encoder
 import mist/internal/file
+import mist/internal/http/body as chunked
 
 pub type ResponseData {
   Websocket
@@ -82,6 +81,7 @@ pub type DecodeError {
   UnknownMethod
   // TODO:  better name?
   InvalidBody
+  BodyTooLarge
   DiscardPacket
   NoHostHeader
   InvalidHttpVersion
@@ -99,6 +99,12 @@ pub fn from_header(value: BitArray) -> String {
 fn singleton_header(field: String) -> Bool {
   case field {
     "authorization"
+    | "origin"
+    | "x-csrf-token"
+    | "cookie"
+    | "content-type"
+    | "content-length"
+    | "transfer-encoding"
     | "host"
     | "upgrade"
     | "sec-websocket-key"
@@ -109,14 +115,180 @@ fn singleton_header(field: String) -> Bool {
   }
 }
 
+fn trim_ows(value: String) -> String {
+  value
+  |> string.to_graphemes
+  |> list.drop_while(fn(char) { char == " " || char == "\t" })
+  |> list.reverse
+  |> list.drop_while(fn(char) { char == " " || char == "\t" })
+  |> list.reverse
+  |> string.concat
+}
+
+// Upgrade byte ownership and rejected-upgrade closure must use the same HTTP
+// OWS rule. Unicode whitespace is not HTTP optional whitespace.
+fn websocket_upgrade(value: String) -> Bool {
+  string.lowercase(trim_ows(value)) == "websocket"
+}
+
+// Connection is a case-insensitive token list, including repeated fields on
+// responses. Close wins regardless of token/field order.
+pub fn connection_has_close(headers: List(#(String, String))) -> Bool {
+  list.any(headers, fn(header) {
+    string.lowercase(header.0) == "connection"
+    && list.any(string.split(header.1, ","), fn(token) {
+      string.lowercase(trim_ows(token)) == "close"
+    })
+  })
+}
+
+fn header_value(
+  field: String,
+  value: BitArray,
+  headers: Dict(String, String),
+) -> Result(String, DecodeError) {
+  use value <- result.try(
+    bit_array.to_string(value) |> result.replace_error(MalformedRequest),
+  )
+  case field {
+    "content-length" -> {
+      let value = trim_ows(value)
+      case
+        dict.has_key(headers, "transfer-encoding")
+        || value == ""
+        || !list.all(string.to_utf_codepoints(value), fn(char) {
+          let char = string.utf_codepoint_to_int(char)
+          char >= 48 && char <= 57
+        })
+      {
+        True -> Error(MalformedRequest)
+        False ->
+          int.parse(value)
+          |> result.replace_error(MalformedRequest)
+          |> result.replace(value)
+      }
+    }
+    "transfer-encoding" -> {
+      let value = string.lowercase(trim_ows(value))
+      case dict.has_key(headers, "content-length") || value != "chunked" {
+        True -> Error(MalformedRequest)
+        False -> Ok(value)
+      }
+    }
+    "connection" ->
+      case dict.get(headers, field) {
+        Ok(previous) -> Ok(previous <> ", " <> value)
+        Error(_) -> Ok(value)
+      }
+    _ -> Ok(value)
+  }
+}
+
+// Supported HTTP/1 head boundary, independent of fragmentation: request line,
+// raw fields (including duplicates), and separators share one byte/deadline
+// budget. Body bytes and pipelined requests are not charged to this head.
+const max_head_bytes = 65_536
+
+const max_head_fields = 100
+
+const head_timeout_ms = 15_000
+
+type HeadBudget {
+  HeadBudget(remaining: Int, fields: Int, deadline: Int)
+}
+
+fn new_head_budget() -> HeadBudget {
+  HeadBudget(max_head_bytes, 0, monotonic_ms() + head_timeout_ms)
+}
+
+fn check_head(budget: HeadBudget) -> Result(Nil, DecodeError) {
+  case budget.remaining > 0 && monotonic_ms() < budget.deadline {
+    True -> Ok(Nil)
+    False -> Error(MalformedRequest)
+  }
+}
+
+fn consume_head(
+  budget: HeadBudget,
+  before: BitArray,
+  rest: BitArray,
+  fields: Int,
+) -> Result(HeadBudget, DecodeError) {
+  let consumed = bit_array.byte_size(before) - bit_array.byte_size(rest)
+  let remaining = budget.remaining - consumed
+  let fields = budget.fields + fields
+  case
+    consumed <= 0
+    || remaining < 0
+    || fields > max_head_fields
+    || monotonic_ms() >= budget.deadline
+  {
+    True -> Error(MalformedRequest)
+    False -> Ok(HeadBudget(..budget, remaining:, fields:))
+  }
+}
+
+fn head_options(budget: HeadBudget) -> List(#(Atom, Int)) {
+  // Bound the decoder's current raw packet too, including an unfinished line.
+  [#(atom.create("packet_size"), budget.remaining)]
+}
+
+fn read_head_data(
+  bs: BitArray,
+  socket: Socket,
+  transport: Transport,
+  needed: Option(Int),
+  budget: HeadBudget,
+) -> Result(BitArray, DecodeError) {
+  // Decode first, then apply this pending-byte check: a coalesced body/tail
+  // can legitimately make the whole socket buffer larger than the head limit.
+  let timeout = int.max(0, budget.deadline - monotonic_ms())
+  use _ <- result.try(
+    case
+      bit_array.byte_size(bs) >= budget.remaining
+      || option.unwrap(needed, 0) > budget.remaining
+      || timeout == 0
+    {
+      True -> Error(MalformedRequest)
+      False -> Ok(Nil)
+    },
+  )
+  use data <- result.try(
+    transport.receive_timeout(transport, socket, 0, timeout)
+    |> result.replace_error(MalformedRequest),
+  )
+  case data {
+    <<>> -> Error(MalformedRequest)
+    _ -> Ok(<<bs:bits, data:bits>>)
+  }
+}
+
 pub fn parse_headers(
   bs: BitArray,
   socket: Socket,
   transport: Transport,
   headers: Dict(String, String),
 ) -> Result(#(Dict(String, String), BitArray), DecodeError) {
-  case decode_packet(HttphBin, bs, []) {
+  parse_headers_head(
+    bs,
+    socket,
+    transport,
+    headers,
+    HeadBudget(..new_head_budget(), fields: dict.size(headers)),
+  )
+}
+
+fn parse_headers_head(
+  bs: BitArray,
+  socket: Socket,
+  transport: Transport,
+  headers: Dict(String, String),
+  budget: HeadBudget,
+) -> Result(#(Dict(String, String), BitArray), DecodeError) {
+  use _ <- result.try(check_head(budget))
+  case decode_packet(HttphBin, bs, head_options(budget)) {
     Ok(BinaryData(HttpHeader(_, _field, field, value), rest)) -> {
+      use budget <- result.try(consume_head(budget, bs, rest, 1))
       let field = from_header(field)
       use _ <- result.try(
         case singleton_header(field) && dict.has_key(headers, field) {
@@ -124,21 +296,18 @@ pub fn parse_headers(
           False -> Ok(Nil)
         },
       )
-      let assert Ok(value) = bit_array.to_string(value)
+      use value <- result.try(header_value(field, value, headers))
       headers
       |> dict.insert(field, value)
-      |> parse_headers(rest, socket, transport, _)
+      |> parse_headers_head(rest, socket, transport, _, budget)
     }
-    Ok(EndOfHeaders(rest)) -> Ok(#(headers, rest))
+    Ok(EndOfHeaders(rest)) -> {
+      use _ <- result.try(consume_head(budget, bs, rest, 0))
+      Ok(#(headers, rest))
+    }
     Ok(MoreData(size)) -> {
-      let amount_to_read = option.unwrap(size, 0)
-      use next <- result.try(read_data(
-        socket,
-        transport,
-        Buffer(amount_to_read, bs),
-        UnknownHeader,
-      ))
-      parse_headers(next, socket, transport, headers)
+      use next <- result.try(read_head_data(bs, socket, transport, size, budget))
+      parse_headers_head(next, socket, transport, headers, budget)
     }
     _other -> Error(UnknownHeader)
   }
@@ -150,6 +319,10 @@ pub fn read_data(
   buffer: Buffer,
   error: DecodeError,
 ) -> Result(BitArray, DecodeError) {
+  use _ <- result.try(case buffer.remaining < 0 {
+    True -> Error(error)
+    False -> Ok(Nil)
+  })
   // TODO:  don't hard-code these, probably
   let to_read = int.min(buffer.remaining, 1_000_000)
   let timeout = 15_000
@@ -170,102 +343,6 @@ pub fn read_data(
   }
 }
 
-const crnl = <<13:int, 10:int>>
-
-pub type Chunk {
-  Chunk(data: BitArray, buffer: Buffer)
-  Complete
-}
-
-pub fn parse_chunk(string: BitArray) -> Chunk {
-  case binary_split(string, <<"\r\n":utf8>>) {
-    [<<"0":utf8>>, _] -> Complete
-    [chunk_size, rest] -> {
-      let assert Ok(chunk_size) = bit_array.to_string(chunk_size)
-      case int.base_parse(chunk_size, 16) {
-        Ok(size) -> {
-          let size = size * 8
-          case rest {
-            <<next_chunk:bits-size(size), 13:int, 10:int, rest:bits>> -> {
-              Chunk(data: next_chunk, buffer: buffer.new(rest))
-            }
-            _ -> {
-              Chunk(data: <<>>, buffer: buffer.new(string))
-            }
-          }
-        }
-        Error(_) -> {
-          Chunk(data: <<>>, buffer: buffer.new(string))
-        }
-      }
-    }
-
-    _ -> {
-      Chunk(data: <<>>, buffer: buffer.new(string))
-    }
-  }
-}
-
-// TODO:  use `parse_chunk` for this
-fn read_chunk(
-  socket: Socket,
-  transport: Transport,
-  buffer: Buffer,
-  body: BytesTree,
-) -> Result(BytesTree, DecodeError) {
-  case buffer.data, binary_match(buffer.data, crnl) {
-    _, Ok(#(offset, _)) -> {
-      let assert <<
-        chunk:bytes-size(offset),
-        _return:int,
-        _newline:int,
-        rest:bytes,
-      >> = buffer.data
-      use chunk_size <- result.try(
-        chunk
-        |> bit_array.to_string
-        |> result.map(charlist.from_string)
-        |> result.replace_error(InvalidBody),
-      )
-      use size <- result.try(
-        string_to_int(chunk_size, 16)
-        |> result.replace_error(InvalidBody),
-      )
-      case size {
-        0 -> Ok(body)
-        size ->
-          case rest {
-            <<next_chunk:bytes-size(size), 13:int, 10:int, rest:bytes>> ->
-              read_chunk(
-                socket,
-                transport,
-                Buffer(0, rest),
-                bytes_tree.append(body, next_chunk),
-              )
-            _ -> {
-              use next <- result.try(read_data(
-                socket,
-                transport,
-                Buffer(0, buffer.data),
-                InvalidBody,
-              ))
-              read_chunk(socket, transport, Buffer(0, next), body)
-            }
-          }
-      }
-    }
-    <<>> as data, _ | data, Error(Nil) -> {
-      use next <- result.try(read_data(
-        socket,
-        transport,
-        Buffer(0, data),
-        InvalidBody,
-      ))
-      read_chunk(socket, transport, Buffer(0, next), body)
-    }
-  }
-}
-
 pub type HttpVersion {
   Http1
   Http11
@@ -279,7 +356,11 @@ pub fn version_to_string(version: HttpVersion) {
 }
 
 pub type ParsedRequest {
-  Http1Request(request: request.Request(Connection), version: HttpVersion)
+  Http1Request(
+    request: request.Request(Connection),
+    version: HttpVersion,
+    buffered_tail: BitArray,
+  )
   Upgrade(BitArray)
 }
 
@@ -317,25 +398,42 @@ pub fn parse_request(
   bs: BitArray,
   conn: Connection,
 ) -> Result(ParsedRequest, DecodeError) {
-  case decode_packet(HttpBin, bs, []) {
+  parse_request_head(bs, conn, new_head_budget())
+}
+
+fn parse_request_head(
+  bs: BitArray,
+  conn: Connection,
+  budget: HeadBudget,
+) -> Result(ParsedRequest, DecodeError) {
+  use _ <- result.try(check_head(budget))
+  case decode_packet(HttpBin, bs, head_options(budget)) {
     Ok(BinaryData(HttpRequest(http_method, AbsPath(path), version), rest)) -> {
+      use budget <- result.try(consume_head(budget, bs, rest, 0))
       use method <- result.try(
         http_method
         |> decode_http_method
         |> result.replace_error(UnknownMethod),
       )
-      use #(headers, rest) <- result.try(parse_headers(
+      use #(headers, rest) <- result.try(parse_headers_head(
         rest,
         conn.socket,
         conn.transport,
         dict.new(),
+        budget,
       ))
       // Gleam's Request does not carry the HTTP version. Reject upgrades
       // before constructing it, while ordinary HTTP/1.0 remains supported.
-      use _ <- result.try(case version, dict.has_key(headers, "upgrade") {
-        #(1, 0), True -> Error(MalformedRequest)
-        _, _ -> Ok(Nil)
-      })
+      use _ <- result.try(
+        case
+          version,
+          dict.has_key(headers, "upgrade")
+          || dict.has_key(headers, "transfer-encoding")
+        {
+          #(1, 0), True -> Error(MalformedRequest)
+          _, _ -> Ok(Nil)
+        },
+      )
       use path <- result.try(
         path
         |> bit_array.to_string
@@ -367,9 +465,10 @@ pub fn parse_request(
           }
       }
 
+      let #(body, buffered_tail) = frame_body(headers, rest)
       let req =
         request.Request(
-          body: Connection(..conn, body: Initial(rest)),
+          body: Connection(..conn, body:),
           headers: dict.to_list(headers),
           host: hostname,
           method: method,
@@ -379,8 +478,8 @@ pub fn parse_request(
           scheme: scheme,
         )
       case version {
-        #(1, 0) -> Ok(Http1Request(request: req, version: Http1))
-        #(1, 1) -> Ok(Http1Request(request: req, version: Http11))
+        #(1, 0) -> Ok(Http1Request(req, Http1, buffered_tail))
+        #(1, 1) -> Ok(Http1Request(req, Http11, buffered_tail))
         _ -> Error(InvalidHttpVersion)
       }
     }
@@ -399,21 +498,26 @@ pub fn parse_request(
       Ok(Upgrade(data))
     }
     Ok(MoreData(size)) -> {
-      let amount_to_read = option.unwrap(size, 0)
-      use next <- result.try(read_data(
+      use next <- result.try(read_head_data(
+        bs,
         conn.socket,
         conn.transport,
-        Buffer(amount_to_read, bs),
-        MalformedRequest,
+        size,
+        budget,
       ))
-      parse_request(next, conn)
+      parse_request_head(next, conn, budget)
     }
     _ -> Error(DiscardPacket)
   }
 }
 
 pub type Body {
+  // Keep Initial for bodyless HTTP/1 and WS upgrade bytes, and the Connection
+  // tuple layout stable for the gateway's pinned Erlang socket FFI.
   Initial(BitArray)
+  // Nonempty HTTP/1 bodies get fresh request-local subjects. The permit makes
+  // completion one-shot; no connection-wide registry or extra actor is needed.
+  Framed(data: BitArray, completion: Subject(BitArray), permit: Subject(Nil))
   Stream(
     selector: Selector(BitArray),
     data: BitArray,
@@ -422,57 +526,274 @@ pub type Body {
   )
 }
 
+fn framed(data: BitArray) -> Body {
+  let permit = process.new_subject()
+  process.send(permit, Nil)
+  Framed(data, process.new_subject(), permit)
+}
+
+fn content_length(headers: List(#(String, String))) -> Int {
+  headers
+  |> list.key_find("content-length")
+  |> result.try(int.parse)
+  |> result.unwrap(0)
+}
+
+fn frame_body(
+  headers: Dict(String, String),
+  rest: BitArray,
+) -> #(Body, BitArray) {
+  let length = content_length(dict.to_list(headers))
+  case dict.get(headers, "transfer-encoding"), dict.get(headers, "upgrade") {
+    Ok("chunked"), _ -> #(framed(rest), <<>>)
+    _, Ok(upgrade) if length == 0 -> {
+      // The gateway also performs its own WS handoff using Initial(rest).
+      // An ordinary read_body still returns an empty HTTP body in this case.
+      case websocket_upgrade(upgrade) {
+        True -> #(Initial(rest), <<>>)
+        False -> #(Initial(<<>>), rest)
+      }
+    }
+    _, _ ->
+      case rest {
+        <<body:bytes-size(length), tail:bytes>> -> {
+          let body = case length {
+            0 -> Initial(body)
+            _ -> framed(body)
+          }
+          #(body, tail)
+        }
+        _ -> #(framed(rest), <<>>)
+      }
+  }
+}
+
+fn complete_body(conn: Connection, tail: BitArray) -> Nil {
+  case conn.body {
+    Framed(_, completion, permit) ->
+      case process.receive(permit, 0) {
+        Ok(_) -> process.send(completion, tail)
+        Error(_) -> Nil
+      }
+    _ -> Nil
+  }
+}
+
+fn body_completed(conn: Connection) -> Bool {
+  case conn.body {
+    Framed(_, completion, _) ->
+      case process.receive(completion, 0) {
+        Ok(tail) -> {
+          // Peek, do not steal the connection loop's tail. Repeated terminal
+          // stream tokens must not read a new request from the socket.
+          process.send(completion, tail)
+          True
+        }
+        Error(_) -> False
+      }
+    Initial(_) -> True
+    _ -> False
+  }
+}
+
+pub fn body_tail(req: Request(Connection)) -> Result(BitArray, Nil) {
+  case req.body.body {
+    Framed(_, completion, permit) -> {
+      // Retire the unused permit too when a route leaves its body unread.
+      let _ = process.receive(permit, 0)
+      process.receive(completion, 0) |> result.replace_error(Nil)
+    }
+    Initial(_) ->
+      // Never reinterpret WebSocket bytes when an upgrade was rejected.
+      case request.get_header(req, "upgrade") {
+        Ok(value) ->
+          case websocket_upgrade(value) {
+            True -> Error(Nil)
+            False -> Ok(<<>>)
+          }
+        Error(_) -> Ok(<<>>)
+      }
+    Stream(..) -> Error(Nil)
+  }
+}
+
+/// Called by the request owner before a terminal chunked response handoff.
+/// Peek only: leave the body-completion tail for its existing owner, and never
+/// drain unread request input to make a downstream close observer safe.
+pub fn request_body_completed(conn: Connection) -> Bool {
+  body_completed(conn)
+}
+
+pub type BodyReader {
+  FixedReader(buffer: Buffer, deadline: Int)
+  ChunkedReader(decoder: chunked.Decoder, deadline: Int)
+}
+
+pub type BodyStep {
+  BodyChunk(data: BitArray, reader: BodyReader)
+  BodyDone
+}
+
+@external(erlang, "mist_ffi", "monotonic_ms")
+fn monotonic_ms() -> Int
+
+pub fn body_reader(
+  req: Request(Connection),
+  limit: Int,
+) -> Result(BodyReader, DecodeError) {
+  let length = content_length(req.headers)
+  use _ <- result.try(case limit < 0 || length > limit {
+    True -> Error(BodyTooLarge)
+    False -> Ok(Nil)
+  })
+  use _ <- result.try(handle_continue(req))
+  let deadline = monotonic_ms() + 15_000
+  case req.body.body {
+    Initial(data) | Framed(data, ..) ->
+      case request.get_header(req, "transfer-encoding") {
+        Ok("chunked") -> Ok(ChunkedReader(chunked.new(data, limit), deadline))
+        _ -> {
+          let #(data, _) = buffer.slice(buffer.new(data), length)
+          Ok(FixedReader(
+            Buffer(length - bit_array.byte_size(data), data),
+            deadline,
+          ))
+        }
+      }
+    _ -> Error(InvalidBody)
+  }
+}
+
+fn read_body_data(
+  req: Request(Connection),
+  amount: Int,
+  deadline: Int,
+) -> Result(BitArray, DecodeError) {
+  let timeout = deadline - monotonic_ms()
+  case amount > 0 && timeout > 0 {
+    True ->
+      transport.receive_timeout(
+        req.body.transport,
+        req.body.socket,
+        int.min(amount, 1_000_000),
+        timeout,
+      )
+      |> result.replace_error(InvalidBody)
+    False -> Error(InvalidBody)
+  }
+}
+
+pub fn read_body_chunk(
+  req: Request(Connection),
+  reader: BodyReader,
+  size: Int,
+) -> Result(BodyStep, DecodeError) {
+  use _ <- result.try(case size > 0 {
+    True -> Ok(Nil)
+    False -> Error(InvalidBody)
+  })
+  case body_completed(req.body) {
+    True -> Ok(BodyDone)
+    False -> advance_body_reader(req, reader, size)
+  }
+}
+
+fn advance_body_reader(
+  req: Request(Connection),
+  reader: BodyReader,
+  size: Int,
+) -> Result(BodyStep, DecodeError) {
+  case reader {
+    FixedReader(buffer, deadline) ->
+      case buffer.data, buffer.remaining {
+        <<>>, 0 -> {
+          complete_body(req.body, <<>>)
+          Ok(BodyDone)
+        }
+        <<>>, remaining -> {
+          use data <- result.try(read_body_data(
+            req,
+            int.min(size, remaining),
+            deadline,
+          ))
+          let buffer = Buffer(remaining - bit_array.byte_size(data), data)
+          read_body_chunk(req, FixedReader(buffer, deadline), size)
+        }
+        _, _ -> {
+          let #(data, rest) = buffer.slice(buffer, size)
+          Ok(BodyChunk(
+            data,
+            FixedReader(Buffer(..buffer, data: rest), deadline),
+          ))
+        }
+      }
+    ChunkedReader(decoder, deadline) -> {
+      use step <- result.try(
+        chunked.next(decoder, size)
+        |> result.map_error(fn(error) {
+          case error {
+            chunked.Invalid -> InvalidBody
+            chunked.TooLarge -> BodyTooLarge
+          }
+        }),
+      )
+      case step {
+        chunked.Complete(tail) -> {
+          complete_body(req.body, tail)
+          Ok(BodyDone)
+        }
+        chunked.Chunk(data, next) ->
+          Ok(BodyChunk(data, ChunkedReader(next, deadline)))
+        chunked.NeedData(next, amount) -> {
+          use data <- result.try(read_body_data(req, amount, deadline))
+          read_body_chunk(
+            req,
+            ChunkedReader(chunked.append(next, data), deadline),
+            size,
+          )
+        }
+      }
+    }
+  }
+}
+
+fn collect_body(
+  req: Request(Connection),
+  reader: BodyReader,
+  body: BytesTree,
+) -> Result(Request(BitArray), DecodeError) {
+  use step <- result.try(read_body_chunk(req, reader, 65_536))
+  case step {
+    BodyDone -> Ok(request.set_body(req, bytes_tree.to_bit_array(body)))
+    BodyChunk(data, next) ->
+      collect_body(req, next, bytes_tree.append(body, data))
+  }
+}
+
 pub fn read_body(
   req: Request(Connection),
+  limit: Int,
 ) -> Result(Request(BitArray), DecodeError) {
-  let transport = case req.scheme {
-    http.Https -> transport.Ssl
-    http.Http -> transport.Tcp
+  let stream_length = case req.body.body {
+    Stream(data: data, remaining: remaining, ..) ->
+      remaining + bit_array.byte_size(data)
+    _ -> 0
   }
-  case request.get_header(req, "transfer-encoding"), req.body.body {
-    Ok("chunked"), Initial(rest) -> {
-      use _nil <- result.try(handle_continue(req))
-
-      use chunk <- result.try(read_chunk(
-        req.body.socket,
-        transport,
-        Buffer(remaining: 0, data: rest),
-        bytes_tree.new(),
-      ))
-      Ok(request.set_body(req, bytes_tree.to_bit_array(chunk)))
+  use _ <- result.try(case stream_length > limit || limit < 0 {
+    True -> Error(BodyTooLarge)
+    False -> Ok(Nil)
+  })
+  case req.body.body {
+    Initial(_) | Framed(..) -> {
+      use reader <- result.try(body_reader(req, limit))
+      collect_body(req, reader, bytes_tree.new())
     }
-    _, Initial(rest) -> {
-      use _nil <- result.try(handle_continue(req))
-      let body_size =
-        req.headers
-        |> list.find(fn(tup) { pair.first(tup) == "content-length" })
-        |> result.map(pair.second)
-        |> result.try(int.parse)
-        |> result.unwrap(0)
-      let remaining = body_size - bit_array.byte_size(rest)
-      case body_size, remaining {
-        0, 0 -> Ok(<<>>)
-        0, _n -> Ok(rest)
-        // is this pipelining? check for GET?
-        _n, 0 -> Ok(rest)
-        _size, _rem ->
-          read_data(
-            req.body.socket,
-            transport,
-            Buffer(remaining, rest),
-            InvalidBody,
-          )
-      }
-      |> result.map(request.set_body(req, _))
-      |> result.replace_error(InvalidBody)
-    }
-    _,
-      Stream(
-        selector: selector,
-        data: data,
-        remaining: remaining,
-        attempts: attempts,
-      )
+    Stream(
+      selector: selector,
+      data: data,
+      remaining: remaining,
+      attempts: attempts,
+    )
       if remaining > 0
     -> {
       let res =
@@ -486,16 +807,19 @@ pub fn read_body(
       case left {
         0 -> Ok(request.set_body(req, new_data))
         _rem ->
-          read_body(request.set_body(
-            req,
-            Connection(
-              ..req.body,
-              body: Stream(selector, new_data, left, attempts + 1),
+          read_body(
+            request.set_body(
+              req,
+              Connection(
+                ..req.body,
+                body: Stream(selector, new_data, left, attempts + 1),
+              ),
             ),
-          ))
+            limit,
+          )
       }
     }
-    _, Stream(data: data, ..) -> {
+    Stream(data: data, ..) -> {
       Ok(request.set_body(req, data))
     }
   }
@@ -518,6 +842,11 @@ pub fn upgrade_socket(
   req: Request(Connection),
   extensions: List(String),
 ) -> Result(Response(BytesTree), Request(Connection)) {
+  use _ <- result.try(case req.body.body {
+    Initial(_) -> Ok(Nil)
+    // An HTTP request body is not a WebSocket frame buffer.
+    Framed(..) | Stream(..) -> Error(req)
+  })
   use _upgrade <- result.try(
     request.get_header(req, "upgrade")
     |> result.replace_error(req),
@@ -660,9 +989,7 @@ pub fn add_default_headers(
 
 fn is_continue(req: Request(Connection)) -> Bool {
   req.headers
-  |> list.find(fn(tup) {
-    pair.first(tup) == "expect" && pair.second(tup) == "100-continue"
-  })
+  |> list.find(fn(tup) { tup.0 == "expect" && tup.1 == "100-continue" })
   |> result.is_ok
 }
 
@@ -691,18 +1018,6 @@ pub fn crypto_hash(hash hash: ShaHash, data data: String) -> String
 
 @external(erlang, "base64", "encode")
 pub fn base64_encode(data data: String) -> String
-
-@external(erlang, "mist_ffi", "binary_match")
-fn binary_match(
-  source source: BitArray,
-  pattern pattern: BitArray,
-) -> Result(#(Int, Int), Nil)
-
-@external(erlang, "mist_ffi", "string_to_int")
-fn string_to_int(string string: Charlist, base base: Int) -> Result(Int, Nil)
-
-@external(erlang, "binary", "split")
-fn binary_split(source: BitArray, pattern: BitArray) -> List(BitArray)
 
 @external(erlang, "mist_ffi", "get_path_and_query")
 fn get_path_and_query(

@@ -9,6 +9,7 @@ import mimic/ir
 import mimic/providers/claude/cache
 import mimic/providers/claude/client_profile
 import mimic/providers/claude/identity as account_identity
+import mimic/providers/claude/json_guard
 import mimic/providers/claude/policy
 import mimic/types.{type Capture, type Header, Capture, Header, Transport}
 
@@ -75,6 +76,12 @@ pub fn prepare_with_policy(
   selected: policy.Policy,
 ) -> Result(Capture, String) {
   use host <- result.try(origin_host(origin))
+  use _ <- result.try(policy.validate(selected))
+  use _ <- result.try(case selected.cache, credential {
+    policy.ApprovedOneHour, ApiKey(_) ->
+      Error("Claude approved 1h cache policy requires selected OAuth")
+    _, _ -> Ok(Nil)
+  })
   let token = case credential {
     ApiKey(token) | OAuth(token) -> token
   }
@@ -92,7 +99,15 @@ pub fn prepare_with_policy(
       False -> Error("Invalid Claude header")
     },
   )
-  use body <- result.try(ir.parse(source))
+  use _ <- result.try(
+    client_profile.validate_headers(
+      list.filter(caller_headers, fn(header) {
+        client_profile.allowed(header.name)
+      }),
+    ),
+  )
+  use original <- result.try(json_guard.parse_native(source, 8_388_608))
+  let body = original
   use _ <- result.try(ir.as_object(body))
   use model <- result.try(ir.string_field(body, "model"))
   use messages <- result.try(
@@ -113,7 +128,12 @@ pub fn prepare_with_policy(
     False -> Error("Invalid Claude body beta")
   })
   use body <- result.try(operation_body(remove(body, "betas"), operation))
-  use body <- result.try(policy.normalize(body, selected))
+  // CPA countTokensUpstream has no Messages forced-tool/sampling stage. Count
+  // the supplied content/controls, not a silently normalized inference request.
+  use body <- result.try(case operation {
+    Messages(_) -> policy.normalize(body, selected)
+    CountTokens -> Ok(body)
+  })
   use body <- result.try(case selected.input, operation {
     policy.TranslatedMessages, Messages(_) ->
       cache.ensure_translated(body, credential_is_oauth(credential), selected)
@@ -137,18 +157,16 @@ pub fn prepare_with_policy(
       False -> Ok(Nil)
     },
   )
-  let betas =
+  let header_betas =
     list.filter(caller_headers, fn(h) {
       string.lowercase(h.name) == "anthropic-beta"
     })
-    |> list.flat_map(fn(h) { string.split(h.value, ",") })
-    |> list.append(body_betas)
-    |> list.map(string.trim)
-    |> list.filter(fn(b) { b != "" })
-    |> list.unique
+    |> list.map(fn(h) { h.value })
+    |> requested_betas
   let betas =
     beta_profile(
-      betas,
+      header_betas,
+      requested_betas(body_betas),
       credential,
       operation,
       body,
@@ -173,7 +191,7 @@ pub fn prepare_with_policy(
       }
   })
   // Byte-preserve a native request when no semantic rewrite was needed.
-  let encoded = case ir.parse(source) == Ok(body) {
+  let encoded = case original == body {
     True -> source
     False -> ir.stringify(body)
   }
@@ -259,24 +277,46 @@ fn credential_is_oauth(credential: Credential) -> Bool {
   }
 }
 
+fn requested_betas(values: List(String)) -> List(String) {
+  values
+  |> list.flat_map(fn(value) { string.split(value, ",") })
+  |> list.map(string.trim)
+  |> list.filter(fn(beta) { beta != "" })
+  |> list.unique
+}
+
 fn beta_profile(
-  requested: List(String),
+  header_betas: List(String),
+  body_betas: List(String),
   credential: Credential,
   operation: Operation,
   body: ir.Value,
   one_hour: Bool,
   selected: policy.Policy,
 ) -> List(String) {
-  let base = case operation, selected.input, requested {
-    CountTokens, policy.TranslatedMessages, _ | CountTokens, _, [] ->
-      list.append(
-        [
-          code_beta, "interleaved-thinking-2025-05-14",
-          "context-management-2025-06-27", "token-counting-2024-11-01",
-        ],
-        list.filter(requested, fn(beta) { !managed_beta(beta) }),
-      )
-    _, _, _ -> requested
+  // Keep input stages distinct: advisor need sees all original flags, but its
+  // position is chosen in the header/profile before protocol and body extras.
+  let requested = list.append(header_betas, body_betas) |> list.unique
+  let advisor = "advisor-tool-2026-03-01"
+  let tools = case ir.field(body, "tools") {
+    Some(ir.Array(tools)) -> tools
+    _ -> []
+  }
+  let needs_advisor =
+    list.contains(requested, advisor)
+    || list.any(tools, fn(tool) {
+      ir.string_field(tool, "type")
+      |> result.unwrap("")
+      |> string.trim
+      |> string.lowercase
+      |> string.starts_with("advisor_")
+    })
+  let base = case operation, selected.input {
+    CountTokens, policy.TranslatedMessages -> [
+      code_beta, "interleaved-thinking-2025-05-14",
+      "context-management-2025-06-27", "token-counting-2024-11-01",
+    ]
+    _, _ -> header_betas
   }
   let base = case credential {
     ApiKey(_) -> without(base, oauth_beta)
@@ -291,15 +331,43 @@ fn beta_profile(
         False, _ -> [oauth_beta, ..base]
       }
   }
+  let base = case needs_advisor {
+    True -> insert_advisor(without(base, advisor), advisor)
+    False -> base
+  }
+  let speed =
+    ir.string_field(body, "speed")
+    |> result.unwrap("")
+    |> string.trim
+    |> string.lowercase
+  let base = case speed, operation, selected.input {
+    "fast", CountTokens, policy.TranslatedMessages -> base
+    "fast", _, _ -> append_beta(base, "fast-mode-2026-02-01")
+    _, _, _ -> base
+  }
+  let extras = case operation, selected.input {
+    CountTokens, policy.TranslatedMessages ->
+      list.filter(requested, fn(beta) { !managed_beta(beta) })
+    _, _ -> body_betas
+  }
+  let base = list.fold(extras, base, append_beta)
+  // Body extras never override the selected credential's authority.
+  let base = case credential {
+    ApiKey(_) -> without(base, oauth_beta)
+    OAuth(_) -> base
+  }
   let base = case operation {
-    CountTokens ->
-      append_beta(without(base, ttl_beta), "token-counting-2024-11-01")
-    Messages(_) if one_hour -> append_beta(base, ttl_beta)
+    CountTokens -> append_beta(base, "token-counting-2024-11-01")
     _ -> base
   }
-  let thinking = nested_string(body, "thinking", "type")
-  let forced =
-    list.contains(["any", "tool"], nested_string(body, "tool_choice", "type"))
+  // Source model/turn filters follow advisor placement and extra assembly.
+  // Removing a trailer must not move advisor past the remaining unknown flags.
+  let thinking = policy.normalized_nested(body, "thinking", "type")
+  let forced = case operation {
+    Messages(_) ->
+      list.contains(["any", "tool"], policy.nested(body, "tool_choice", "type"))
+    CountTokens -> False
+  }
   let model =
     ir.string_field(body, "model") |> result.unwrap("") |> policy.model
   let base = case
@@ -317,34 +385,28 @@ fn beta_profile(
     True -> without(base, display_beta)
     False -> base
   }
+  let base = case
+    model == policy.Haiku
+    && ir.field(body, "fallbacks") == None
+    && selected.turn != policy.Helper
+  {
+    True -> without(base, "server-side-fallback-2026-06-01")
+    False -> base
+  }
   let base = case nested_string(body, "thinking", "display") {
-    "" -> base
-    _ -> without(base, redact_beta)
+    display ->
+      case string.trim(display) == "" {
+        True -> base
+        False -> without(base, redact_beta)
+      }
   }
   let base = case selected.turn, one_hour, operation {
-    policy.Helper, _, _ | policy.Subagent, False, _ | _, _, CountTokens ->
-      without(base, ttl_beta)
+    policy.Helper, _, _ | policy.Subagent, False, _ -> without(base, ttl_beta)
     _, _, _ -> base
   }
-  let base = case operation, ir.string_field(body, "speed") {
-    Messages(_), Ok("fast") -> append_beta(base, "fast-mode-2026-02-01")
-    _, _ -> base
-  }
-  let advisor = "advisor-tool-2026-03-01"
-  let tools = case ir.field(body, "tools") {
-    Some(ir.Array(tools)) -> tools
-    _ -> []
-  }
-  let needs_advisor =
-    list.contains(requested, advisor)
-    || list.any(tools, fn(tool) {
-      ir.string_field(tool, "type")
-      |> result.unwrap("")
-      |> string.starts_with("advisor_")
-    })
-  case needs_advisor {
-    True -> insert_advisor(without(base, advisor), advisor)
-    False -> base
+  case operation {
+    Messages(_) if one_hour -> append_beta(base, ttl_beta)
+    _ -> base
   }
 }
 
@@ -421,9 +483,15 @@ fn set(body: ir.Value, key: String, value: ir.Value) -> ir.Value {
 }
 
 fn safe_value(value: String) -> Bool {
-  !string.contains(value, "\r")
-  && !string.contains(value, "\n")
-  && !string.contains(value, "\u{0000}")
+  safe_bytes(<<value:utf8>>)
+}
+
+fn safe_bytes(value: BitArray) -> Bool {
+  case value {
+    <<byte, _:bits>> if byte < 32 || byte == 127 -> False
+    <<_, rest:bits>> -> safe_bytes(rest)
+    _ -> True
+  }
 }
 
 fn safe_name(name: String) -> Bool {

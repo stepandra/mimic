@@ -15,6 +15,7 @@ import mimic/providers/devin/identity
 import mimic/providers/devin/models as catalog
 import mimic/providers/devin/request as wire
 import mimic/providers/devin/response
+import mimic/providers/devin/responses_request
 import mimic/providers/devin/stream
 import mimic/providers/registry
 import mimic/providers/runtime
@@ -72,6 +73,11 @@ pub fn prepare_configured(
   request: c.Request,
   configured: List(catalog.Model),
 ) -> Result(c.HttpRequest, c.Failure) {
+  // Resolve the complete mapping before even inspecting credential material.
+  use _ <- result.try(
+    catalog.resolve(configured, request.model)
+    |> result.replace_error(c.Failure(c.Unsupported, c.NotSent, None)),
+  )
   use _ <- result.try(
     case
       context.provider == "devin"
@@ -106,6 +112,7 @@ pub fn prepare_configured(
     case request.protocol {
       "openai-chat" -> openai.decode_request(request.body)
       "anthropic-messages" -> anthropic.decode_request(request.body)
+      "openai-responses" -> responses_request.decode(request.body)
       _ -> Error("unsupported")
     }
     |> result.replace_error(c.Failure(c.Unsupported, c.NotSent, None)),
@@ -156,6 +163,62 @@ pub fn prepare_configured(
     protocol: c.Http1,
     media: c.ConnectProto,
   ))
+}
+
+/// Pure Chat preflight before runtime/credential acquisition. Exercise the
+/// existing native request encoder, including image/tool and option guards.
+pub fn validate_chat(
+  request: c.Request,
+  configured: List(catalog.Model),
+) -> Result(Nil, String) {
+  use model <- result.try(catalog.resolve(configured, request.model))
+  use _ <- result.try(
+    case
+      request.provider == "devin"
+      && request.auth_mode == "session_token"
+      && request.protocol == "openai-chat"
+      && request.operation == "generate"
+      && request.session != ""
+      && request.pinned_account == None
+      && list.all(request.required, fn(cap) {
+        cap == c.Buffer
+        || cap == c.Stream
+        || cap == c.Tools
+        || { cap == c.Images && model.images }
+      })
+    {
+      True -> Ok(Nil)
+      False -> Error("unsupported Devin Chat request")
+    },
+  )
+  use _ <- result.try(ir.parse_bounded(request.body, 8_388_608, 128, 65_536))
+  use input <- result.try(openai.decode_request(request.body))
+  use _ <- result.try(
+    case
+      input.model == request.model
+      && { input.stream == Some(True) } == { request.mode == c.Streaming }
+    {
+      True -> Ok(Nil)
+      False -> Error("Devin Chat model or stream mismatch")
+    },
+  )
+  use _ <- result.try(case input.max_tokens {
+    None -> Ok(Nil)
+    Some(n) if n > 0 && n <= model.max_tokens -> Ok(Nil)
+    _ -> Error("invalid Devin Chat max_tokens")
+  })
+  use _ <- result.try(wire.encode_configured(
+    input,
+    "synthetic-f27-preflight",
+    wire.Identity(
+      "linux",
+      string.repeat("0", 732),
+      "00000000-0000-4000-8000-000000000027",
+      "00000000-0000-4000-8000-000000000028",
+    ),
+    configured,
+  ))
+  Ok(Nil)
 }
 
 /// Defense in depth: even a direct prepare call cannot select a remote origin.
@@ -223,15 +286,25 @@ pub fn execute_configured(
   request: c.Request,
   configured: List(catalog.Model),
 ) -> Result(String, c.Failure) {
+  use _ <- result.try(
+    catalog.resolve(configured, request.model)
+    |> result.replace_error(c.Failure(c.Unsupported, c.NotSent, None)),
+  )
+  execute_with_adapter(owner, request, configured_adapter(ca_file, configured))
+}
+
+/// Trusted provider integration seam; transport and native projection remain
+/// unchanged. Configured catalog callers bind their adapter to selected Context.
+pub fn execute_with_adapter(
+  owner: runtime.Runtime,
+  request: c.Request,
+  adapter: c.Adapter(handle),
+) -> Result(String, c.Failure) {
   use _ <- result.try(case request.mode {
     c.Buffered -> Ok(Nil)
     c.Streaming -> unsupported()
   })
-  use output <- result.try(runtime.execute(
-    owner,
-    configured_adapter(ca_file, configured),
-    request,
-  ))
+  use output <- result.try(runtime.execute(owner, adapter, request))
   use _ <- result.try(case output.status >= 200 && output.status < 300 {
     True -> Ok(Nil)
     False -> Error(c.Failure(c.Unavailable, c.Started, None))
@@ -279,15 +352,27 @@ pub fn open_native_stream(
   request: c.Request,
   configured: List(catalog.Model),
 ) -> Result(#(String, stream.Stream), c.Failure) {
+  use _ <- result.try(
+    catalog.resolve(configured, request.model)
+    |> result.replace_error(c.Failure(c.Unsupported, c.NotSent, None)),
+  )
+  open_native_with_adapter(
+    owner,
+    request,
+    configured_adapter(ca_file, configured),
+  )
+}
+
+pub fn open_native_with_adapter(
+  owner: runtime.Runtime,
+  request: c.Request,
+  adapter: c.Adapter(handle),
+) -> Result(#(String, stream.Stream), c.Failure) {
   use _ <- result.try(case request.mode {
     c.Streaming -> Ok(Nil)
     _ -> unsupported()
   })
-  use output <- result.try(runtime.open(
-    owner,
-    configured_adapter(ca_file, configured),
-    request,
-  ))
+  use output <- result.try(runtime.open(owner, adapter, request))
   case output.status >= 200 && output.status < 300 {
     True -> Ok(#(output.account, stream.new(output.stream)))
     False -> {

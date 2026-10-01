@@ -130,6 +130,16 @@ pub fn finish(decoder: Decoder) -> Result(Nil, String) {
   }
 }
 
+/// No partial frame or fragmented message is retained on this live decoder.
+/// This is not socket readiness: transports must separately drain/check queued
+/// bytes before admitting a new turn. It does not authorize continuation.
+pub fn quiescent(decoder: Decoder) -> Bool {
+  !decoder.closed
+  && decoder.phase == Header
+  && decoder.pending_size == 0
+  && !decoder.fragmented
+}
+
 fn scan(
   decoder: Decoder,
   chunk: BitArray,

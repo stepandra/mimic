@@ -1,0 +1,9 @@
+# F11 owned packet against dd15c610ec39e4f296c30fe02347d0d2b368a629.
+# This manifest excludes itself. No commit/JJ/publication was performed.
+42b9477d6d137268fa662bacbd74beeb56b4ca2b7d75600e2a1c3852db57116b  src/mimic/protocol/responses/stream.gleam
+bb055116319cf36cbfec4053c06ba1302e2807b7d3202952161945f76ad74548  src/mimic/protocol/responses/sparse.gleam
+0e324b67d89c1ba983170e60c820ca7b6b31755f30ea6841888f7566a94ed172  src/mimic/protocol/responses/http.gleam
+61b4800c2dc5062e52b1161a548b5d4c6b6e791f97bd1d905e3d5ccd0b983355  src/mimic/protocol/responses/websocket.gleam
+eb81754684dc536c04b5c3003051ac00e6108ca37c5c20d1ea8204bb8a150b31  test/responses_sparse_test.gleam
+1b3b8f8c194a4c0a0eab52b7221edbf73183fcdcaab50c3de79d2978c926729e  test/responses_sparse_scenario.gleam
+d744b6c46d38aca285099bb6d8092ca487a8d62c2008e7bfc1587a14f537d79e  docs/F11_RESPONSES_SPARSE.md

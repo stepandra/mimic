@@ -11,6 +11,7 @@ import mimic/dialect/responses
 import mimic/ir
 import mimic/providers/contracts as runtime
 import mimic/providers/xai/endpoint
+import mimic/providers/xai/http_continuation
 import mimic/providers/xai/json_guard
 import mimic/providers/xai/oauth
 import mimic/providers/xai/request as xai_request
@@ -92,7 +93,16 @@ pub fn prepare_plan(
       valid_token(data.credential.access_token)
     _, _ -> invalid()
   })
-  use _ <- result.try(json_guard.parse(req.body) |> sanitized)
+  use document <- result.try(json_guard.parse(req.body) |> sanitized)
+  use _ <- result.try(ir.as_object(document) |> sanitized)
+  use _ <- result.try(
+    http_continuation.validate(document)
+    |> result.replace_error(runtime.Failure(
+      runtime.Unsupported,
+      runtime.NotSent,
+      None,
+    )),
+  )
   use decoded <- result.try(case operation {
     endpoint.Compact -> responses.decode_compact_request(req.body) |> sanitized
     _ -> responses.decode_request(req.body) |> sanitized
@@ -101,14 +111,13 @@ pub fn prepare_plan(
     case
       decoded.model == req.model
       && decoded.stream == { req.mode == runtime.Streaming }
-      && decoded.previous_response_id == None
     {
       True -> Ok(Nil)
       False -> invalid()
     },
   )
-  // HTTP state references still require a trusted receipt; WS owns its receipt
-  // through the shared connection-scoped Session. Never silently drop state.
+  // HTTP state is explicitly unsupported, not dropped or recovered from a WS
+  // receipt. Stateless history must be fully paired within this request.
   use _ <- result.try(responses.pair_input(decoded, []) |> sanitized)
   use _ <- result.try(case operation {
     endpoint.Compact ->

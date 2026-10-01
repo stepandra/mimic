@@ -5,3 +5,7 @@
 *.beam
 erl_crash.dump
 .DS_Store
+
+# Python test/harness caches are generated, never release inputs.
+__pycache__/
+*.py[cod]

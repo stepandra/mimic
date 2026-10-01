@@ -1,0 +1,270 @@
+*** Begin Patch
+*** Update File: src/mimic/gateway.gleam
+@@
+           registry.Model(
+             ..registered,
+-            capabilities: case config.codex_websocket && !entry.responses_lite {
++            capabilities: case config.codex_websocket {
+               True -> [contracts.WebSocket, ..registered.capabilities]
+               False -> registered.capabilities
+             },
+@@
+           reply(
+             200,
+-            models.available_http(catalog, enabled, config.codex_websocket)
++            models.available(catalog, enabled, config.codex_websocket, True)
+             |> ir.stringify,
+             "application/json",
+           )
+@@
+         Error(_) -> fn() { False }
+       }
+-      websocket.upgrade_authenticated(
+-        req,
+-        services.engine,
+-        identity,
+-        websocket.Settings(
+-          catalog,
+-          config.codex_user_agent,
+-          enabled,
+-          None,
+-          authorized,
+-        ),
+-      )
++      case storage.new(config.state_dir) {
++        Error(_) -> reject(422, "WebSocket credential state unavailable")
++        Ok(store) ->
++          websocket.upgrade_native_authenticated(
++            req,
++            services.engine,
++            identity,
++            websocket.Settings(
++              catalog,
++              config.codex_user_agent,
++              enabled,
++              None,
++              authorized,
++            ),
++            store,
++          )
++      }
+     }
+     Get, "/v1/models", None -> {
+       let ids =
+*** Update File: src/mimic/gateway/websocket.gleam
+@@
+ import gleam/result
+ import gleam/string
++import mimic/auth/storage
+ import mimic/ir
+ import mimic/protocol/responses/frames
++import mimic/providers/codex/lite
+ import mimic/providers/codex/models
+ import mimic/providers/codex_websocket
++import mimic/providers/codex_websocket/errors as codex_ws_errors
+ import mimic/providers/contracts
+@@
+   Tick
+   InitTimeout
++  NativeTerminal(codex_websocket.Terminal)
+ }
+ 
+ type State {
+@@
+     engine: runtime.Runtime,
+     tenant: String,
+     settings: Settings,
++    store: Option(storage.Store),
++    header_lite: Bool,
+     subject: process.Subject(Message),
++    terminal_subject: process.Subject(codex_websocket.Terminal),
+     decoder: frames.Decoder,
+     pending: BitArray,
+@@
+   tenant: String,
+   settings: Settings,
+ ) -> Response(mist.ResponseData) {
++  upgrade(req, engine, tenant, settings, None, False)
++}
++
++/// F13 opt-in composition. Settings and the compatibility upgrade ABI stay
++/// unchanged. A singleton handshake Lite marker is untrusted intent only;
++/// the selected provider independently qualifies every frame against catalog.
++pub fn upgrade_native_authenticated(
++  req: Request(mist.Connection),
++  engine: runtime.Runtime,
++  tenant: String,
++  settings: Settings,
++  store: storage.Store,
++) -> Response(mist.ResponseData) {
++  case lite.header_enabled(
++    list.map(req.headers, fn(header) { Header(header.0, header.1) }),
++  ) {
++    Error(_) -> reject()
++    Ok(intent) -> upgrade(req, engine, tenant, settings, Some(store), intent)
++  }
++}
++
++fn upgrade(
++  req: Request(mist.Connection),
++  engine: runtime.Runtime,
++  tenant: String,
++  settings: Settings,
++  store: Option(storage.Store),
++  header_lite: Bool,
++) -> Response(mist.ResponseData) {
+   case validate(req, tenant, settings) {
+     Error(_) -> reject()
+     Ok(headers) -> {
+@@
+       let start = fn() {
+         actor.new_with_initialiser(1000, fn(subject) {
++          let terminal_subject = process.new_subject()
+           let assert Ok(decoder) =
+             frames.new(frames.Server, 1_048_576, 1_048_576)
+@@
+               engine,
+               tenant,
+               settings,
++              store,
++              header_lite,
+               subject,
++              terminal_subject,
+               decoder,
+               pending,
+@@
+             ))
++            |> actor.selecting(
++              process.new_selector()
++              |> process.select(subject)
++              |> process.select_map(terminal_subject, NativeTerminal),
++            )
+             |> actor.returning(process.self()),
+           )
+@@
+           case message {
+             None -> Ok(Some(state))
+             Some(message) -> {
++              use _ <- result.try(case state.settings.authorized() {
++                True -> Ok(Nil)
++                False -> Error("WebSocket authorization unavailable")
++              })
+               use bytes <- result.try(frames.encode_text(
+                 frames.Server,
+                 message,
+@@
+   use upstream <- result.try(case state.upstream {
+     Some(upstream) -> Ok(upstream)
+-    None ->
++    None -> {
++      let adapter = case state.store {
++        None ->
++          codex_websocket.adapter_notifying(
++            state.tenant,
++            state.settings.catalog,
++            state.settings.user_agent,
++            state.settings.ca_file,
++            fn(terminal) { process.send(state.terminal_subject, terminal) },
++          )
++        Some(store) ->
++          codex_websocket.native_adapter_notifying(
++            state.tenant,
++            state.settings.catalog,
++            state.settings.user_agent,
++            state.settings.ca_file,
++            state.header_lite,
++            store,
++            state.settings.authorized,
++            fn(terminal) { process.send(state.terminal_subject, terminal) },
++          )
++      }
+       runtime.open_session(
+         state.engine,
+-        codex_websocket.adapter(
+-          state.tenant,
+-          state.settings.catalog,
+-          state.settings.user_agent,
+-          state.settings.ca_file,
+-        ),
++        adapter,
+         request,
+       )
+       |> safe
++    }
+   })
+   // Opening a session may block on acquisition/refresh. Recheck after it
+   // returns as well, and close that handle if authorization was withdrawn.
+@@
+ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
++  // The terminal channel preempts an older queued Tick/reset. Selection order
++  // across senders is not an authority fence, and no callback/root ack is used.
++  case process.receive(state.terminal_subject, 0) {
++    Ok(terminal) -> finish_terminal(state, terminal)
++    Error(_) -> handle_message(state, message)
++  }
++}
++
++fn handle_message(state: State, message: Message) -> actor.Next(State, Message) {
+   case message {
++    NativeTerminal(terminal) -> finish_terminal(state, terminal)
+     InitTimeout if !state.started -> stop(state)
+     InitTimeout -> actor.continue(state)
+     Begin(headers, ack) if !state.started -> {
+@@
+         False ->
+           case step(state) {
+-            Error(_) -> fail(state)
++            Error(_) -> fail_after_terminal(state)
+             Ok(None) -> stop(state)
+             Ok(Some(next)) -> {
+@@
++fn finish_terminal(
++  state: State,
++  terminal: codex_websocket.Terminal,
++) -> actor.Next(State, Message) {
++  let _ = publish_terminal(state, terminal)
++  stop(state)
++}
++
++fn fail_after_terminal(state: State) -> actor.Next(State, Message) {
++  // A blocking runtime poll/send can enqueue a terminal while this Tick runs.
++  // Recheck after failure before fail() could fabricate a generic wire error.
++  case process.receive(state.terminal_subject, 0) {
++    Ok(terminal) -> finish_terminal(state, terminal)
++    Error(_) -> fail(state)
++  }
++}
++
++/// A suppressed/error notification never goes through fail(), which would
++/// manufacture a generic error text event. Publication or failure ends once.
++fn publish_terminal(
++  state: State,
++  terminal: codex_websocket.Terminal,
++) -> Result(Nil, String) {
++  use action <- result.try(codex_websocket.terminal_action(terminal) |> safe)
++  use bytes <- result.try(case action {
++    codex_ws_errors.Suppressed -> Ok(None)
++    codex_ws_errors.RequestFault(data) ->
++      frames.encode_text(frames.Server, data, None) |> result.map(Some)
++    codex_ws_errors.TransportClose(code, reason) ->
++      frames.encode_close(frames.Server, Some(code), reason, None)
++      |> result.map(Some)
++  })
++  use _ <- result.try(case state.settings.authorized() {
++    True -> Ok(Nil)
++    False -> Error("WebSocket authorization unavailable")
++  })
++  // Recheck the captured selected-record revision after encoding and just
++  // before writing, not only at notification creation or the next inference.
++  use _ <- result.try(codex_websocket.terminal_action(terminal) |> safe)
++  case bytes {
++    None -> Ok(Nil)
++    Some(bytes) -> write(state.connection, bytes_tree.from_bit_array(bytes))
++  }
++}
++
+ fn step(state: State) -> Result(Option(State), String) {
+   use bytes <- result.try(case state.pending {
+     <<>> -> receive_bytes(state.connection, 10)
+     bytes -> Ok(Some(bytes))
+*** End Patch

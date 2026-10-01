@@ -1,0 +1,234 @@
+*** Begin Patch
+*** Update File: src/mimic/gateway/config.gleam
+@@
+         "codex", "oauth", Some(catalog) ->
+           list.try_each(a.models, fn(model) {
+             use item <- result.try(models.lookup(catalog, model) |> safe)
+-            case item.responses_lite {
+-              True -> Error("unsupported Codex Responses-lite model")
+-              False -> Ok(Nil)
+-            }
++            codex_adapter.registration(item) |> safe |> result.map(fn(_) { Nil })
+           })
+         _, _, _ ->
+           Error("unsupported provider/auth mode or missing Codex catalog")
+*** Update File: src/mimic/gateway.gleam
+@@
+ import mimic/providers/xai/adapter as xai
+ import mimic/providers/xai/endpoint as xai_endpoint
+ import mimic/providers/xai/models as xai_models
++import mimic/types.{Header}
+ import mist
+ import simplifile
+@@
+         use entry <- result.try(models.lookup(catalog, model) |> sanitized)
+         use registered <- result.try(codex.registration(entry) |> sanitized)
+         Ok(
+           registry.Model(
+             ..registered,
+-            capabilities: case config.codex_websocket {
++            capabilities: case config.codex_websocket && !entry.responses_lite {
+               True -> [contracts.WebSocket, ..registered.capabilities]
+               False -> registered.capabilities
+             },
+           ),
+         )
+@@
+ fn route(
+   req: Request(mist.Connection),
+   config: Config,
+   services: Services,
+   identity: String,
+ ) -> Response(mist.ResponseData) {
+   case req.method, req.path, req.query {
++    Get, "/models", None | Get, "/backend-api/codex/models", None ->
++      case config.codex_catalog {
++        None -> reject(422, "Codex catalog unavailable")
++        Some(catalog) -> {
++          let enabled =
++            config.accounts
++            |> list.filter(fn(account) { account.provider == "codex" })
++            |> list.flat_map(fn(account) { account.models })
++            |> list.unique
++          reply(
++            200,
++            models.available_http(catalog, enabled, config.codex_websocket)
++            |> ir.stringify,
++            "application/json",
++          )
++        }
++      }
++    Post, "/responses", None
++    | Post, "/backend-api/codex/responses", None ->
++      with_body(req, fn(body) {
++        dispatch(req, config, services, identity, body, "codex", "responses")
++      })
++    Post, "/responses/compact", None
++    | Post, "/backend-api/codex/responses/compact", None ->
++      with_body(req, fn(body) {
++        dispatch(req, config, services, identity, body, "codex", "responses/compact")
++      })
+     Get, "/v1/responses", None if config.codex_websocket -> {
+       let assert Some(catalog) = config.codex_catalog
+       let enabled =
+@@
+ fn serve_codex(
++  incoming: Request(mist.Connection),
++  config: Config,
++  services: Services,
++  identity: String,
++  request: contracts.Request,
++  streaming: Bool,
++) -> Response(mist.ResponseData) {
++  case
++    codex.classify_http(
++      request,
++      list.map(incoming.headers, fn(pair) { Header(pair.0, pair.1) }),
++    )
++  {
++    Error(_) -> reject(400, "invalid Codex request mode")
++    Ok(request) ->
++      serve_codex_classified(incoming, config, services, identity, request, streaming)
++  }
++}
++
++fn serve_codex_classified(
+   incoming: Request(mist.Connection),
+   config: Config,
+   services: Services,
+@@
+   // credentials or contact an upstream. Headerless and compact stay stateless.
+   let hint = case services.continuation, request.operation {
+-    Some(_), "responses" -> codex_session_hint(incoming)
++    Some(_), "responses" | Some(_), "responses/lite" -> codex_session_hint(incoming)
+     _, _ -> Ok(None)
+   }
+   case request_json.parse(request.body), hint {
+     Ok(body), Ok(hint) ->
+       case services.continuation, hint, request.operation {
+-        Some(state), Some(session), "responses" -> {
++        Some(state), Some(session), "responses"
++        | Some(state), Some(session), "responses/lite" -> {
+           let assert Some(catalog) = config.codex_catalog
+           codex_http.serve(
+             incoming,
+@@
+         }
+         Ok(prepared) ->
+           case request.operation, streaming {
+-            "responses", True ->
+-              case responses_http.open_sse(opened.status, opened.headers) {
++            "responses", True | "responses/lite", True ->
++              case responses_http.open_sse_with_policy(
++                opened.status, opened.headers, codex_response.http_policy(prepared),
++              ) {
+                 Error(_) -> {
+                   runtime.cancel(opened.stream)
+                   reject(502, "invalid upstream response")
+                 }
+                 Ok(_) -> stream_codex(req, opened, prepared)
+               }
+-            "responses", False ->
+-              case codex_response.consume(opened, prepared) {
+-                Ok(codex_response.Completed(completion)) ->
+-                  reply(
+-                    200,
+-                    responses.encode_response(completion.response),
+-                    "application/json",
+-                  )
+-                Ok(codex_response.Unsuccessful(response)) ->
+-                  reply(
+-                    200,
+-                    responses.encode_response(response),
+-                    "application/json",
+-                  )
++            "responses", False | "responses/lite", False ->
++              case codex_response.consume_http(opened, prepared) {
++                Ok(delivery) ->
++                  case codex_response.delivery_body(delivery) {
++                    Ok(body) -> reply(200, body, "application/json")
++                    Error(_) -> reject(502, "invalid upstream response")
++                  }
+                 _ -> reject(502, "invalid upstream response")
+               }
+             "responses/compact", False ->
+@@
+         False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
+         True ->
+           case
+-            codex_response.forward(state.opened, state.prepared, fn(event) {
++            codex_response.forward_http(state.opened, state.prepared, fn(event) {
+               case
+                 mist.send_chunk(
+                   connection,
+-                  bit_array.from_string(responses_stream.encode_event(event)),
++                  bit_array.from_string(responses_stream.encode_wire_event(event)),
+                 )
+               {
+                 Ok(_) -> Ok(responses_http.Continue)
+*** Update File: src/mimic/gateway/codex_http.gleam
+@@
+ import gleam/option.{None}
+ import gleam/result
+-import mimic/dialect/responses
+ import mimic/protocol/continuation
+ import mimic/protocol/responses/http as responses_http
+@@
+     request.provider == "codex"
+     && request.auth_mode == "oauth"
+     && request.protocol == "responses"
+-    && request.operation == "responses"
++    && { request.operation == "responses" || request.operation == "responses/lite" }
+     && request.session != ""
+     && config.tenant != ""
+     && config.continuation == None
+@@
+           case streaming {
+             True ->
+               case
+-                responses_http.open_sse(
++                responses_http.open_sse_with_policy(
+                   codex_http.status(opened),
+                   codex_http.headers(opened),
++                  codex_http.http_policy(opened),
+                 )
+               {
+                 Error(_) -> {
+@@
+               }
+             False ->
+-              case codex_http.consume(opened) {
+-                Ok(codex_response.Completed(completion)) ->
+-                  reply(
+-                    200,
+-                    responses.encode_response(completion.response),
+-                    "application/json",
+-                  )
+-                Ok(codex_response.Unsuccessful(response)) ->
+-                  reply(
+-                    200,
+-                    responses.encode_response(response),
+-                    "application/json",
+-                  )
++              case codex_http.consume_http(opened) {
++                Ok(delivery) ->
++                  case codex_response.delivery_body(delivery) {
++                    Ok(body) -> reply(200, body, "application/json")
++                    Error(_) -> reject(502, "invalid upstream response")
++                  }
+                 _ -> reject(502, "invalid upstream response")
+               }
+@@
+         False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
+         True ->
+           case
+-            codex_http.forward(state.opened, fn(event) {
++            codex_http.forward_http(state.opened, fn(event) {
+               mist.send_chunk(
+                 connection,
+-                bit_array.from_string(responses_stream.encode_event(event)),
++                bit_array.from_string(responses_stream.encode_wire_event(event)),
+               )
+               |> result.map(fn(_) { responses_http.Continue })
+               |> result.replace_error("downstream closed")
+*** End Patch

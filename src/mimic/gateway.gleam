@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/http.{Get, Post}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
+import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
@@ -32,6 +33,7 @@ import mimic/providers/claude/companion as claude_companion
 import mimic/providers/claude/http as claude_http
 import mimic/providers/claude/json_guard as strict_json
 import mimic/providers/claude/login as claude_login
+import mimic/providers/claude/rejection as claude_rejection
 import mimic/providers/claude/transport as claude_transport
 import mimic/providers/codex/adapter as codex
 import mimic/providers/codex/json_guard as request_json
@@ -40,8 +42,7 @@ import mimic/providers/codex/request as codex_request
 import mimic/providers/codex/response as codex_response
 import mimic/providers/contracts
 import mimic/providers/devin/auth as devin_auth
-import mimic/providers/devin/bridge as devin
-import mimic/providers/devin/chat_gateway as devin_chat
+import mimic/providers/devin/catalog_gateway as devin_catalog_gateway
 import mimic/providers/kimi/adapter as kimi
 import mimic/providers/kimi/models as kimi_models
 import mimic/providers/kimi/oauth as kimi_oauth
@@ -52,8 +53,9 @@ import mimic/providers/registry
 import mimic/providers/runtime
 import mimic/providers/transport
 import mimic/providers/xai/adapter as xai
-import mimic/providers/xai/endpoint as xai_endpoint
-import mimic/providers/xai/models as xai_models
+import mimic/providers/xai/enrollment as xai_enrollment
+import mimic/providers/xai/http_continuation as xai_http_continuation
+import mimic/types.{Header}
 import mist
 import simplifile
 
@@ -88,6 +90,12 @@ type ClaudeStream {
 
 pub fn port(server: Server) -> Int {
   server.port
+}
+
+/// Secret-free diagnostic backed by the running gateway's actual runtime.
+pub fn active_leases(server: Server) -> Result(Int, String) {
+  runtime.active_leases(server.services.engine)
+  |> result.replace_error("gateway runtime unavailable")
 }
 
 pub fn load(path: String) -> Result(Config, String) {
@@ -167,6 +175,13 @@ pub fn cli(args: List(String)) -> Result(String, String) {
       use body <- result.try(strict_json.parse(source) |> sanitized)
       use material <- result.try(case account.provider, account.auth_mode {
         "claude", "oauth" -> claude_adapter.import_oauth(body) |> sanitized
+        "xai", "oauth" -> {
+          use oauth <- result.try(case account.oauth {
+            Some(config.XaiOAuth(settings)) -> Ok(settings)
+            _ -> Error("configured xAI OAuth account required")
+          })
+          xai_enrollment.import_material(oauth, body) |> sanitized
+        }
         "kimi", "oauth" -> {
           use oauth <- result.try(case account.oauth {
             Some(config.KimiOAuth(settings)) -> Ok(settings)
@@ -327,7 +342,13 @@ pub fn start(config: Config) -> Result(Server, String) {
   use registrations <- result.try(registrations(config))
   use registry <- result.try(registry.new(registrations) |> sanitized)
   use engine <- result.try(
-    runtime.start(store, registry, config.runtime_accounts(config)) |> sanitized,
+    runtime.start_with_bindings(
+      store,
+      registry,
+      config.runtime_accounts(config),
+      config.runtime_bindings(config),
+    )
+    |> sanitized,
   )
   use continuation <- result.try(case config.codex_http_continuation {
     False -> Ok(None)
@@ -413,20 +434,16 @@ fn registrations(config: Config) -> Result(List(registry.Model), String) {
         Ok(
           registry.Model(
             ..registered,
-            capabilities: case config.codex_websocket {
+            capabilities: case config.codex_websocket && !entry.responses_lite {
               True -> [contracts.WebSocket, ..registered.capabilities]
               False -> registered.capabilities
             },
           ),
         )
       }
-      #("devin", model) -> devin_chat.registration(model) |> sanitized
-      #("xai", model) ->
-        xai_models.registration_for(
-          model,
-          xai_endpoint.defaults(xai_endpoint.ApiKey),
-        )
-        |> sanitized
+      #("devin", model) ->
+        devin_catalog_gateway.registration(config.devin, model) |> sanitized
+      #("xai", model) -> config.xai_registration(config, model) |> sanitized
       #("kimi", model) -> kimi_models.registration(model) |> sanitized
       #("openai-compatible-kimi", model) ->
         kimi_compat.registration(model) |> sanitized
@@ -459,6 +476,41 @@ fn route(
   identity: String,
 ) -> Response(mist.ResponseData) {
   case req.method, req.path, req.query {
+    Get, "/models", None | Get, "/backend-api/codex/models", None ->
+      case config.codex_catalog {
+        None -> reject(422, "Codex catalog unavailable")
+        Some(catalog) -> {
+          let enabled =
+            config.accounts
+            |> list.filter(fn(account) { account.provider == "codex" })
+            |> list.flat_map(fn(account) { account.models })
+            |> list.unique
+          reply(
+            200,
+            models.available_http(catalog, enabled, config.codex_websocket)
+              |> ir.stringify,
+            "application/json",
+          )
+        }
+      }
+    Post, "/responses", None | Post, "/backend-api/codex/responses", None ->
+      with_body(req, fn(body) {
+        dispatch(req, config, services, identity, body, "codex", "responses")
+      })
+    Post, "/responses/compact", None
+    | Post, "/backend-api/codex/responses/compact", None
+    ->
+      with_body(req, fn(body) {
+        dispatch(
+          req,
+          config,
+          services,
+          identity,
+          body,
+          "codex",
+          "responses/compact",
+        )
+      })
     Get, "/v1/responses", None if config.codex_websocket -> {
       let assert Some(catalog) = config.codex_catalog
       let enabled =
@@ -487,25 +539,36 @@ fn route(
       )
     }
     Get, "/v1/models", None -> {
-      let ids =
-        config.accounts
-        |> list.flat_map(fn(a) { a.models })
-        |> list.unique
-      data(
-        200,
-        json.object([
-          #("object", json.string("list")),
-          #(
-            "data",
-            json.array(ids, fn(id) {
-              json.object([
-                #("id", json.string(id)),
-                #("object", json.string("model")),
-              ])
-            }),
-          ),
-        ]),
-      )
+      let rows =
+        registrations(config)
+        |> result.try(fn(registered) {
+          list.try_map(registered, fn(model) {
+            case model.provider {
+              "devin" ->
+                devin_catalog_gateway.listing(config.devin, model)
+                |> result.map(ir.to_json)
+                |> sanitized
+              _ ->
+                Ok(
+                  json.object([
+                    #("id", json.string(model.id)),
+                    #("object", json.string("model")),
+                  ]),
+                )
+            }
+          })
+        })
+      case rows {
+        Error(_) -> reject(503, "model catalog unavailable")
+        Ok(rows) ->
+          data(
+            200,
+            json.object([
+              #("object", json.string("list")),
+              #("data", json.array(rows, fn(row) { row })),
+            ]),
+          )
+      }
     }
     Post, "/v1/messages", None ->
       with_body(req, fn(body) {
@@ -606,7 +669,11 @@ fn dispatch(
                 a.provider == provider
                 || {
                   provider == "messages"
-                  && { a.provider == "claude" || a.provider == "kimi" }
+                  && {
+                    a.provider == "claude"
+                    || a.provider == "kimi"
+                    || a.provider == "devin"
+                  }
                 }
                 || {
                   provider == "chat"
@@ -622,15 +689,18 @@ fn dispatch(
                     a.provider == "codex"
                     || a.provider == "xai"
                     || a.provider == "kimi"
+                    || { a.provider == "devin" && operation == "responses" }
                   }
                 }
               }
               && list.contains(a.models, model)
+              && config.admits_operation(a, model, operation)
             })
           {
             Error(_) -> reject(422, "unsupported model")
             Ok(account) -> {
               let provider = account.provider
+              let client_operation = operation
               let operation = case provider {
                 "devin" -> "generate"
                 _ -> operation
@@ -648,6 +718,10 @@ fn dispatch(
                   model,
                   case provider {
                     "claude" -> "messages"
+                    "devin" if client_operation == "messages" ->
+                      "anthropic-messages"
+                    "devin" if client_operation == "responses" ->
+                      "openai-responses"
                     "devin" -> "openai-chat"
                     "kimi" if operation == "messages" -> "anthropic"
                     "kimi" if operation == "chat/completions" -> "chat"
@@ -661,25 +735,49 @@ fn dispatch(
                   None,
                   body,
                 )
-              case provider, operation, stream {
+              case provider, client_operation, stream {
                 "claude", "messages", _
                 | "claude", "messages/count_tokens", False
-                -> serve_claude(req, engine, request, stream)
+                -> serve_claude(req, config, engine, request, stream)
                 "codex", "responses", _ | "codex", "responses/compact", False ->
                   serve_codex(req, config, services, identity, request, stream)
                 "xai", "responses", _ | "xai", "responses/compact", False ->
-                  serve_xai(req, engine, request, stream)
+                  serve_xai(req, config, engine, request, stream)
                 "kimi", "responses", _
                 | "kimi", "chat/completions", _
                 | "kimi", "messages", _
                 -> serve_kimi(req, config, engine, request, stream)
                 "openai-compatible-kimi", "chat/completions", _ ->
                   serve_kimi_compat(req, config, engine, request, stream)
-                "devin", "generate", True ->
-                  devin_chat.serve(req, engine, None, request)
-                "devin", "generate", False ->
-                  case devin.execute(engine, None, request) {
+                "devin", "messages", True
+                | "devin", "chat/completions", True
+                | "devin", "responses", True
+                ->
+                  devin_catalog_gateway.serve(
+                    req,
+                    engine,
+                    None,
+                    request,
+                    config.devin,
+                  )
+                "devin", "messages", False
+                | "devin", "chat/completions", False
+                | "devin", "responses", False
+                ->
+                  case
+                    devin_catalog_gateway.execute(
+                      engine,
+                      None,
+                      request,
+                      config.devin,
+                    )
+                  {
                     Ok(body) -> reply(200, body, "application/json")
+                    Error(contracts.Failure(
+                      contracts.Unsupported,
+                      contracts.NotSent,
+                      _,
+                    )) -> reject(422, "unsupported Devin request")
                     Error(_) -> reject(503, "provider unavailable")
                   }
                 _, _, _ -> reject(422, "unsupported provider operation")
@@ -692,12 +790,34 @@ fn dispatch(
 
 fn serve_claude(
   incoming: Request(mist.Connection),
+  settings: config.Config,
   engine: runtime.Runtime,
   req: contracts.Request,
   streaming: Bool,
 ) -> Response(mist.ResponseData) {
-  let adapter = claude_transport.http(claude_adapter.prepare, None)
-  case runtime.open(engine, adapter, req) {
+  let prepare = fn(context, request) {
+    config.prepare_claude(settings, context, request)
+  }
+  let opened = case settings.claude_quota_classification {
+    True ->
+      runtime.open(engine, claude_transport.http_classified(prepare, None), req)
+    False -> runtime.open(engine, claude_transport.http(prepare, None), req)
+  }
+  case opened {
+    Error(contracts.Failure(contracts.RequestLimited, contracts.Rejected, None))
+      if settings.claude_quota_classification
+    -> reject(429, "provider request limited")
+    Error(contracts.Failure(contracts.Quota, contracts.Rejected, Some(ms)))
+      if settings.claude_quota_classification
+      && ms > 0
+      && ms <= claude_rejection.max_retry_ms
+    -> {
+      let response = reject(429, "provider quota exhausted")
+      Response(..response, headers: [
+        #("retry-after", int.to_string({ ms + 999 } / 1000)),
+        ..response.headers
+      ])
+    }
     Error(_) -> reject(503, "provider unavailable")
     Ok(opened) ->
       case streaming {
@@ -777,16 +897,46 @@ fn serve_codex(
   request: contracts.Request,
   streaming: Bool,
 ) -> Response(mist.ResponseData) {
+  case
+    codex.classify_http(
+      request,
+      list.map(incoming.headers, fn(pair) { Header(pair.0, pair.1) }),
+    )
+  {
+    Error(_) -> reject(400, "invalid Codex request mode")
+    Ok(request) ->
+      serve_codex_classified(
+        incoming,
+        config,
+        services,
+        identity,
+        request,
+        streaming,
+      )
+  }
+}
+
+fn serve_codex_classified(
+  incoming: Request(mist.Connection),
+  config: Config,
+  services: Services,
+  identity: String,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
   // Reject an unavailable continuation before runtime acquisition can refresh
   // credentials or contact an upstream. Headerless and compact stay stateless.
   let hint = case services.continuation, request.operation {
-    Some(_), "responses" -> codex_session_hint(incoming)
+    Some(_), "responses" | Some(_), "responses/lite" ->
+      codex_session_hint(incoming)
     _, _ -> Ok(None)
   }
   case request_json.parse(request.body), hint {
     Ok(body), Ok(hint) ->
       case services.continuation, hint, request.operation {
-        Some(state), Some(session), "responses" -> {
+        Some(state), Some(session), "responses"
+        | Some(state), Some(session), "responses/lite"
+        -> {
           let assert Some(catalog) = config.codex_catalog
           codex_http.serve(
             incoming,
@@ -851,28 +1001,27 @@ fn serve_codex_stateless(
         }
         Ok(prepared) ->
           case request.operation, streaming {
-            "responses", True ->
-              case responses_http.open_sse(opened.status, opened.headers) {
+            "responses", True | "responses/lite", True ->
+              case
+                responses_http.open_sse_with_policy(
+                  opened.status,
+                  opened.headers,
+                  codex_response.http_policy(prepared),
+                )
+              {
                 Error(_) -> {
                   runtime.cancel(opened.stream)
                   reject(502, "invalid upstream response")
                 }
                 Ok(_) -> stream_codex(req, opened, prepared)
               }
-            "responses", False ->
-              case codex_response.consume(opened, prepared) {
-                Ok(codex_response.Completed(completion)) ->
-                  reply(
-                    200,
-                    responses.encode_response(completion.response),
-                    "application/json",
-                  )
-                Ok(codex_response.Unsuccessful(response)) ->
-                  reply(
-                    200,
-                    responses.encode_response(response),
-                    "application/json",
-                  )
+            "responses", False | "responses/lite", False ->
+              case codex_response.consume_http(opened, prepared) {
+                Ok(delivery) ->
+                  case codex_response.delivery_body(delivery) {
+                    Ok(body) -> reply(200, body, "application/json")
+                    Error(_) -> reject(502, "invalid upstream response")
+                  }
                 _ -> reject(502, "invalid upstream response")
               }
             "responses/compact", False ->
@@ -907,34 +1056,31 @@ fn serve_codex_stateless(
 
 fn serve_xai(
   req: Request(mist.Connection),
+  settings: Config,
   engine: runtime.Runtime,
   request: contracts.Request,
   streaming: Bool,
 ) -> Response(mist.ResponseData) {
-  // Both origin and credential belong to the runtime-selected account.
-  // Capturing the first configured origin here breaks multi-account fallback.
-  let native =
-    xai.selected_http(xai_endpoint.defaults(xai_endpoint.ApiKey), None)
+  // Unsupported HTTP state references must not trigger credential acquisition
+  // or a refresh. WS has its own connection-scoped continuation authority.
+  case xai_http_continuation.guard(request.body) {
+    Error(_) -> reject(422, "unsupported xAI request")
+    Ok(_) -> serve_xai_admitted(req, settings, engine, request, streaming)
+  }
+}
+
+fn serve_xai_admitted(
+  req: Request(mist.Connection),
+  settings: Config,
+  engine: runtime.Runtime,
+  request: contracts.Request,
+  streaming: Bool,
+) -> Response(mist.ResponseData) {
   let adapter =
-    contracts.Adapter(..native, open: fn(context: contracts.Context, request) {
-      let policy = case string.starts_with(context.origin, "http://") {
-        True -> xai_endpoint.LocalMock
-        False -> xai_endpoint.VerifiedTls
-      }
-      let settings =
-        xai_endpoint.Config(
-          xai_endpoint.ApiKey,
-          True,
-          False,
-          Some(context.origin <> "/v1"),
-          Some(context.origin <> "/v1"),
-          None,
-          policy,
-        )
-      // Keep restoration refs on the selected native handle. The legacy raw
-      // Capture hook cannot safely restore namespaced/colliding tool names.
-      xai.selected_http(settings, None).open(context, request)
-    })
+    xai.configured_http(
+      fn(context, request) { config.xai_endpoint(settings, context, request) },
+      None,
+    )
   case runtime.open(engine, adapter, request) {
     Error(contracts.Failure(contracts.Unsupported, contracts.NotSent, _))
     | Error(contracts.Failure(
@@ -1246,23 +1392,33 @@ fn stream_codex(
     loop: fn(state, _, connection) {
       case state.adopted {
         False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
-        True ->
-          case
-            codex_response.forward(state.opened, state.prepared, fn(event) {
-              case
-                mist.send_chunk(
-                  connection,
-                  bit_array.from_string(responses_stream.encode_event(event)),
-                )
-              {
-                Ok(_) -> Ok(responses_http.Continue)
-                Error(_) -> Error("downstream closed")
-              }
-            })
-          {
+        True -> {
+          let emit = fn(data) {
+            mist.send_chunk(connection, bit_array.from_string(data))
+            |> result.map(fn(_) { responses_http.Continue })
+            |> result.replace_error("downstream closed")
+          }
+          // Stateless strict delivery has no receipt budget. Keep its existing
+          // codec-only consumer; native-lite needs the explicit wire projection.
+          let forwarded = case state.prepared.response_mode {
+            codex_request.StrictResponses ->
+              codex_response.forward(state.opened, state.prepared, fn(event) {
+                emit(responses_stream.encode_event(event))
+              })
+              |> result.map(fn(_) { Nil })
+            codex_request.NativeLiteResponses ->
+              codex_response.forward_http(
+                state.opened,
+                state.prepared,
+                fn(event) { emit(responses_stream.encode_wire_event(event)) },
+              )
+              |> result.map(fn(_) { Nil })
+          }
+          case forwarded {
             Ok(_) -> mist.chunk_stop()
             Error(_) -> mist.chunk_stop_abnormal("upstream stream failed")
           }
+        }
       }
     },
   )

@@ -89,9 +89,11 @@ pub fn count_tokens_has_separate_profile_test() {
     )
   count.target |> should.equal("/v1/messages/count_tokens?beta=true")
   header(count, "accept") |> should.equal(["application/json"])
+  // Caller-owned count is not an inferred CLI profile. The explicit translated
+  // policy tests cover CPA's four-entry count baseline separately.
   header(count, "anthropic-beta")
   |> should.equal([
-    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,token-counting-2024-11-01",
+    "oauth-2025-04-20,token-counting-2024-11-01",
   ])
   let assert Ok(value) = ir.parse(count.body)
   ir.extras(value, ["model", "messages"]) |> should.equal([])
@@ -106,7 +108,7 @@ pub fn count_tokens_has_separate_profile_test() {
     )
   header(api, "anthropic-beta")
   |> should.equal([
-    "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,token-counting-2024-11-01",
+    "token-counting-2024-11-01",
   ])
 }
 

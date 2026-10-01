@@ -10,7 +10,6 @@ import gleam/http/response.{type Response, Response}
 import gleam/json
 import gleam/option.{None}
 import gleam/result
-import mimic/dialect/responses
 import mimic/protocol/continuation
 import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream as responses_stream
@@ -60,7 +59,9 @@ pub fn serve(
     request.provider == "codex"
     && request.auth_mode == "oauth"
     && request.protocol == "responses"
-    && request.operation == "responses"
+    && {
+      request.operation == "responses" || request.operation == "responses/lite"
+    }
     && request.session != ""
     && config.tenant != ""
     && config.continuation == None
@@ -79,9 +80,10 @@ pub fn serve(
           case streaming {
             True ->
               case
-                responses_http.open_sse(
+                responses_http.open_sse_with_policy(
                   codex_http.status(opened),
                   codex_http.headers(opened),
+                  codex_http.http_policy(opened),
                 )
               {
                 Error(_) -> {
@@ -91,19 +93,12 @@ pub fn serve(
                 Ok(_) -> stream(incoming, opened)
               }
             False ->
-              case codex_http.consume(opened) {
-                Ok(codex_response.Completed(completion)) ->
-                  reply(
-                    200,
-                    responses.encode_response(completion.response),
-                    "application/json",
-                  )
-                Ok(codex_response.Unsuccessful(response)) ->
-                  reply(
-                    200,
-                    responses.encode_response(response),
-                    "application/json",
-                  )
+              case codex_http.consume_http(opened) {
+                Ok(delivery) ->
+                  case codex_response.delivery_body(delivery) {
+                    Ok(body) -> reply(200, body, "application/json")
+                    Error(_) -> reject(502, "invalid upstream response")
+                  }
                 _ -> reject(502, "invalid upstream response")
               }
           }
@@ -134,20 +129,31 @@ fn stream(
     loop: fn(state, _, connection) {
       case state.adopted {
         False -> mist.chunk_stop_abnormal("upstream ownership unavailable")
-        True ->
-          case
-            codex_http.forward(state.opened, fn(event) {
-              mist.send_chunk(
-                connection,
-                bit_array.from_string(responses_stream.encode_event(event)),
-              )
-              |> result.map(fn(_) { responses_http.Continue })
-              |> result.replace_error("downstream closed")
-            })
-          {
+        True -> {
+          let emit = fn(data) {
+            mist.send_chunk(connection, bit_array.from_string(data))
+            |> result.map(fn(_) { responses_http.Continue })
+            |> result.replace_error("downstream closed")
+          }
+          // Preserve strict valid-prefix delivery before receipt construction.
+          // Sparse delivery has a separate wire/report authority contract.
+          let forwarded = case codex_http.http_policy(state.opened) {
+            responses_stream.Strict ->
+              codex_http.forward(state.opened, fn(event) {
+                emit(responses_stream.encode_event(event))
+              })
+              |> result.map(fn(_) { Nil })
+            responses_stream.NativeSparse(_, _, _) ->
+              codex_http.forward_http(state.opened, fn(event) {
+                emit(responses_stream.encode_wire_event(event))
+              })
+              |> result.map(fn(_) { Nil })
+          }
+          case forwarded {
             Ok(_) -> mist.chunk_stop()
             Error(_) -> mist.chunk_stop_abnormal("upstream stream failed")
           }
+        }
       }
     },
   )

@@ -4,7 +4,6 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response, Response}
-import gleam/list
 import gleam/option.{type Option, None}
 import gleam/result
 import mimic/protocol/responses/http.{Continue}
@@ -29,10 +28,15 @@ type Sender {
 /// Calling this constructor is an explicit local-only integration opt-in.
 /// It registers only Chat; Stream must not leak to buffered Messages.
 pub fn registration(model: String) -> Result(registry.Model, String) {
-  use registered <- result.try(
-    list.find(bridge.models(), fn(entry) { entry.id == model })
-    |> result.replace_error("unsupported Devin Chat model"),
-  )
+  configured_registration(model, catalog.baseline())
+}
+
+pub fn configured_registration(
+  model: String,
+  configured: List(catalog.Model),
+) -> Result(registry.Model, String) {
+  use selected <- result.try(catalog.resolve(configured, model))
+  let assert [registered] = bridge.configured_models([selected])
   Ok(
     registry.Model(..registered, protocols: ["openai-chat"], capabilities: [
       c.Stream,
@@ -46,11 +50,38 @@ pub fn open(
   ca: Option(String),
   request: c.Request,
 ) -> Result(#(String, client.Client(chat.State)), c.Failure) {
+  open_configured(engine, ca, request, catalog.baseline())
+}
+
+pub fn open_configured(
+  engine: runtime.Runtime,
+  ca: Option(String),
+  request: c.Request,
+  configured: List(catalog.Model),
+) -> Result(#(String, client.Client(chat.State)), c.Failure) {
+  open_with_adapter(
+    engine,
+    request,
+    configured,
+    bridge.configured_adapter(ca, configured),
+  )
+}
+
+pub fn open_with_adapter(
+  engine: runtime.Runtime,
+  request: c.Request,
+  configured: List(catalog.Model),
+  adapter: c.Adapter(handle),
+) -> Result(#(String, client.Client(chat.State)), c.Failure) {
   use _ <- result.try(
     case request.protocol == "openai-chat" && request.mode == c.Streaming {
       True -> Ok(Nil)
       False -> Error(c.Failure(c.Unsupported, c.NotSent, None))
     },
+  )
+  use _ <- result.try(
+    bridge.validate_chat(request, configured)
+    |> result.replace_error(c.Failure(c.Unsupported, c.NotSent, None)),
   )
   use state <- result.try(
     chat.new(
@@ -60,11 +91,10 @@ pub fn open(
     )
     |> result.replace_error(c.Failure(c.Unsupported, c.NotSent, None)),
   )
-  use #(account, stream) <- result.try(bridge.open_native_stream(
+  use #(account, stream) <- result.try(bridge.open_native_with_adapter(
     engine,
-    ca,
     request,
-    catalog.baseline(),
+    adapter,
   ))
   Ok(#(account, client.new(stream, state, chat.encode)))
 }

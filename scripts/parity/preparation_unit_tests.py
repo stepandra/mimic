@@ -1,4 +1,4 @@
-"""Guarded F30–F34 preparation checks, never paired runtime/parity evidence."""
+"""Guarded F01/F30–F34 offline checks, never paired runtime/parity evidence."""
 import json
 import unittest
 
@@ -6,7 +6,7 @@ from safe_unit_tests import execution_guards
 
 
 MODULES = (
-    "test_f30_claude", "test_f31_codex", "test_f32_kimi",
+    "test_contract", "test_f30_claude", "test_f31_codex", "test_f32_kimi",
     "test_f33_grok", "test_f34_devin",
 )
 

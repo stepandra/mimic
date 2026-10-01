@@ -172,41 +172,41 @@ class ContainmentTests(unittest.TestCase):
             with self.assertRaises(qa.Blocked):
                 qa.shipment_copy(source, second_target)
 
-    def test_cleanup_after_timeout(self):
+    def test_timeout_is_blocked_and_cleanup_is_owned_by_f02(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             (work / "acquisition.json").write_text(json.dumps(synthetic_receipt()))
             calls = []
 
-            def docker(args, timeout=30):
+            def session(_docker, _socket, _image, _target, args, _bind, _connect):
                 calls.append(args)
-                if args[0] == "run":
-                    raise qa.Blocked("docker_unavailable_or_timeout")
-                return subprocess.CompletedProcess(args, 0, b"", b"")
+                raise qa.containment.Blocked("containment_cleanup_failed")
 
-            with patch.object(qa, "WORK", work), patch.object(qa, "require_docker"), \
+            with patch.object(qa, "WORK", work), \
                     patch.object(qa, "shipment_copy", return_value="b" * 64), \
-                    patch.object(qa, "docker", side_effect=docker):
-                report = qa.offline(work, ["claude"], ["sse"])
+                    patch.object(qa.containment, "session", side_effect=session), \
+                    patch.object(qa, "docker", side_effect=AssertionError("no legacy Docker")):
+                report = qa.offline(work, ["claude"], ["sse"],
+                                    "/synthetic/docker", "/synthetic/socket")
             self.assertEqual(report["status"], "blocked")
-            self.assertEqual(calls[-1][:2], ["rm", "--force"])
-            self.assertEqual(calls[-1][2], calls[-2][calls[-2].index("--name") + 1])
+            self.assertEqual(report["blocked_reason"], "containment_cleanup_failed")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "/qa/harness.py")
 
     def test_inner_containment_block_is_not_compatibility_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             (work / "acquisition.json").write_text(json.dumps(synthetic_receipt()))
 
-            def docker(args, timeout=30):
-                if args[0] == "run":
-                    return subprocess.CompletedProcess(
-                        args, 2, json.dumps(synthetic_child_report(args, "blocked")).encode(), b"")
-                return subprocess.CompletedProcess(args, 0, b"", b"")
+            def session(_docker, _socket, _image, _target, args, _bind, _connect):
+                return subprocess.CompletedProcess(
+                    args, 2, json.dumps(synthetic_child_report(args, "blocked")).encode(), b"")
 
-            with patch.object(qa, "WORK", work), patch.object(qa, "require_docker"), \
+            with patch.object(qa, "WORK", work), \
                     patch.object(qa, "shipment_copy", return_value="b" * 64), \
-                    patch.object(qa, "docker", side_effect=docker):
-                report = qa.offline(work, ["claude"], ["sse"])
+                    patch.object(qa.containment, "session", side_effect=session):
+                report = qa.offline(work, ["claude"], ["sse"],
+                                    "/synthetic/docker", "/synthetic/socket")
             self.assertEqual(report["status"], "blocked")
             self.assertEqual(report["results"][0]["status"], "blocked")
 
@@ -278,19 +278,19 @@ class EvidenceValidationTests(unittest.TestCase):
             work = Path(temporary)
             (work / "acquisition.json").write_text(json.dumps(synthetic_receipt()))
 
-            def docker(args, timeout=30):
-                if args[0] == "run":
-                    body = payload(args) if callable(payload) else payload
-                    raw = body if isinstance(body, bytes) else json.dumps(body).encode()
-                    return subprocess.CompletedProcess(args, exit_code, raw, b"")
-                return subprocess.CompletedProcess(args, 0, b"", b"")
+            def session(_docker, _socket, _image, _target, args, _bind, _connect):
+                body = payload(args) if callable(payload) else payload
+                raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+                return subprocess.CompletedProcess(args, exit_code, raw, b"")
 
-            with patch.object(qa, "WORK", work), patch.object(qa, "require_docker"), \
+            with patch.object(qa, "WORK", work), \
                     patch.object(qa, "shipment_copy", return_value="b" * 64), \
-                    patch.object(qa, "docker", side_effect=docker), \
+                    patch.object(qa.containment, "session", side_effect=session), \
+                    patch.object(qa, "docker", side_effect=AssertionError("no legacy Docker")), \
                     patch.object(subprocess, "run", side_effect=AssertionError("no real process")), \
                     patch.object(qa.urllib.request, "urlopen", side_effect=AssertionError("no acquisition")):
-                return qa.offline(work, [client], [workflow])
+                return qa.offline(work, [client], [workflow],
+                                  "/synthetic/docker", "/synthetic/socket")
 
     def test_status_only_pass_is_rejected_at_parent_boundary(self):
         report = self.offline_report({"status": "passed"})

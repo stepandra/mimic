@@ -53,13 +53,21 @@ pub fn selected_http(
 }
 
 fn http_with_config(config, ca_file) {
+  configured_http(fn(context, _) { Ok(config(context)) }, ca_file)
+}
+
+/// Root operation-binding hook. Select only from operator-owned configuration
+/// AFTER runtime account selection, and fail before opening any socket.
+/// Existing fixed-base and selected_http APIs remain unchanged.
+pub fn configured_http(
+  config: fn(contracts.Context, contracts.Request) ->
+    Result(endpoint.Config, contracts.Failure),
+  ca_file: Option(String),
+) -> contracts.Adapter(Handle) {
   contracts.Adapter(
     open: fn(context, request) {
-      use plan <- result.try(bridge.prepare_plan(
-        config(context),
-        context,
-        request,
-      ))
+      use settings <- result.try(config(context, request))
+      use plan <- result.try(bridge.prepare_plan(settings, context, request))
       use opened <- result.try(egress.stream_open(
         context.origin,
         plan.capture,

@@ -3,6 +3,7 @@
 import gleam/list
 import gleam/result
 import mimic/ir
+import mimic/providers/codex/json_guard
 import mimic/providers/codex/normalize
 
 pub const baseline = "acdace936fa7df2905500c7f5e0a97d683138dea"
@@ -33,7 +34,7 @@ pub type Catalog {
 /// Parse an explicitly supplied Codex /models payload, preserving unknown
 /// metadata rather than manufacturing capabilities from a model-name prefix.
 pub fn decode(body: String, source: Source) -> Result(Catalog, String) {
-  use root <- result.try(ir.parse(body))
+  use root <- result.try(json_guard.parse(body))
   use values <- result.try(ir.required(root, "models"))
   use values <- result.try(ir.as_array(values))
   use models <- result.try(list.try_map(values, model))
@@ -103,6 +104,27 @@ pub fn available(
       ),
     ),
   ])
+}
+
+/// F12 gateway discovery: HTTP-lite is implemented, WS-lite is not. Ordinary
+/// models retain the existing explicit WS opt-in. F13 can replace this binding
+/// only after its actual native WS consumer and authority fences are admitted.
+pub fn available_http(
+  catalog: Catalog,
+  ids: List(String),
+  websocket_enabled: Bool,
+) -> ir.Value {
+  let catalog =
+    Catalog(
+      ..catalog,
+      models: list.map(catalog.models, fn(model) {
+        Model(
+          ..model,
+          prefers_websocket: model.prefers_websocket && !model.responses_lite,
+        )
+      }),
+    )
+  available(catalog, ids, websocket_enabled, True)
 }
 
 /// Deliberately small native-client metadata subset transcribed from

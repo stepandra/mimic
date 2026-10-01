@@ -13,6 +13,7 @@ import mimic/types.{type Header, Header}
 pub opaque type Connection {
   Connection(
     socket: Socket,
+    physical: PhysicalSocket,
     decoder: frames.Decoder,
     pending: BitArray,
     timeout_ms: Int,
@@ -38,23 +39,30 @@ type Origin {
 
 type Socket
 
-@external(erlang, "mimic_egress_ffi", "connect_with_ca")
+type PhysicalSocket
+
+@external(erlang, "mimic_ws_transport_ffi", "connect_with_ca")
 fn connect(
   host: String,
   port: Int,
   tls: Bool,
   timeout: Int,
   ca_file: Option(String),
-) -> Result(Socket, String)
+) -> Result(#(Socket, PhysicalSocket), String)
 
-@external(erlang, "mimic_egress_ffi", "write")
-fn write(socket: Socket, bytes: BitArray, timeout: Int) -> Result(Nil, String)
+@external(erlang, "mimic_ws_transport_ffi", "write_until")
+fn write_until(
+  socket: Socket,
+  physical: PhysicalSocket,
+  bytes: BitArray,
+  deadline: Int,
+) -> Result(Nil, String)
 
 @external(erlang, "mimic_egress_ffi", "line")
 fn line(socket: Socket, timeout: Int) -> Result(String, String)
 
-@external(erlang, "mimic_egress_ffi", "close")
-fn close_socket(socket: Socket) -> Nil
+@external(erlang, "mimic_ws_transport_ffi", "abort")
+fn abort_socket(physical: PhysicalSocket, deadline: Int) -> Result(Nil, String)
 
 @external(erlang, "mimic_egress_ffi", "now_ms")
 fn now_ms() -> Int
@@ -116,19 +124,21 @@ pub fn open(
     string.byte_size(request) <= 16_384,
     "WS request headers exceed limit",
   ))
-  use socket <- result.try(connect(
+  use connected <- result.try(connect(
     origin.host,
     origin.port,
     origin.tls,
     config.timeout_ms,
     config.ca_file,
   ))
+  let #(socket, physical) = connected
   let deadline = now_ms() + config.timeout_ms
   let opened = {
-    use _ <- result.try(write(
+    use _ <- result.try(write_until(
       socket,
+      physical,
       bit_array.from_string(request),
-      remaining(deadline),
+      deadline,
     ))
     use status_line <- result.try(line(socket, remaining(deadline)))
     use status <- result.try(parse_status(status_line))
@@ -147,6 +157,7 @@ pub fn open(
     use _ <- result.try(frames.client_upgrade(status, response_headers, nonce))
     Ok(Connection(
       socket,
+      physical,
       decoder,
       <<>>,
       config.timeout_ms,
@@ -158,8 +169,10 @@ pub fn open(
   case opened {
     Ok(connection) -> Ok(connection)
     Error(reason) -> {
-      close_socket(socket)
-      Error(reason)
+      case abort_socket(physical, now_ms() + 100) {
+        Ok(_) -> Error(reason)
+        Error(reason) -> Error(reason)
+      }
     }
   }
 }
@@ -177,14 +190,16 @@ pub fn send(connection: Connection, text: String) -> Result(Nil, String) {
       text,
       Some(random(4)),
     ))
-    write(connection.socket, encoded, connection.timeout_ms)
+    write_until(
+      connection.socket,
+      connection.physical,
+      encoded,
+      now_ms() + connection.timeout_ms,
+    )
   }
   case attempted {
     Ok(_) -> Ok(Nil)
-    Error(reason) -> {
-      close_socket(connection.socket)
-      Error(reason)
-    }
+    Error(reason) -> cleanup_error(connection, reason)
   }
 }
 
@@ -207,10 +222,109 @@ pub fn poll(
   }
   case attempted {
     Ok(value) -> Ok(value)
-    Error(reason) -> {
-      close_socket(connection.socket)
-      Error(reason)
+    Error(reason) -> cleanup_error(connection, reason)
+  }
+}
+
+/// Admission between Responses turns, not an inference/continuation receipt.
+/// None from poll is insufficient: an incomplete or fragmented data message
+/// may be retained by the decoder, or another read may already be queued.
+/// Drain only complete ping/pong controls, then require a real receive timeout.
+/// Partial frames (even a split control), data, EOF and budget exhaustion close.
+/// One absolute deadline covers reads and control writes; never reconnect.
+pub fn ensure_idle(connection: Connection) -> Result(Connection, String) {
+  let deadline = now_ms() + int.min(connection.timeout_ms, 250)
+  let attempted =
+    idle(connection, deadline, 0, bit_array.byte_size(connection.pending), 0)
+  case attempted {
+    Ok(next) -> Ok(next)
+    Error(reason) -> cleanup_error(connection, reason)
+  }
+}
+
+fn idle(
+  connection: Connection,
+  deadline: Int,
+  reads: Int,
+  bytes: Int,
+  controls: Int,
+) -> Result(Connection, String) {
+  use _ <- result.try(ensure(
+    now_ms() < deadline && reads <= 8 && bytes <= 65_536 && controls <= 128,
+    "WS idle admission exceeded its read/byte/time/control budget",
+  ))
+  use _ <- result.try(ensure(
+    frames.quiescent(connection.decoder),
+    "WS idle admission has an incomplete frame or fragmented message",
+  ))
+  case connection.pending {
+    <<>> -> {
+      use _ <- result.try(ensure(
+        reads < 8,
+        "WS idle admission read limit exceeded",
+      ))
+      let timeout = int.min(connection.poll_ms, remaining(deadline))
+      use chunk <- result.try(recv(connection.socket, timeout))
+      use _ <- result.try(ensure(
+        now_ms() < deadline,
+        "WS idle admission deadline expired",
+      ))
+      case chunk {
+        None -> Ok(connection)
+        Some(chunk) ->
+          idle_bytes(
+            Connection(..connection, pending: chunk),
+            deadline,
+            reads + 1,
+            bytes + bit_array.byte_size(chunk),
+            controls,
+          )
+      }
     }
+    _ -> idle_bytes(connection, deadline, reads, bytes, controls)
+  }
+}
+
+fn idle_bytes(
+  connection: Connection,
+  deadline: Int,
+  reads: Int,
+  bytes: Int,
+  controls: Int,
+) -> Result(Connection, String) {
+  use _ <- result.try(ensure(
+    now_ms() < deadline && bytes <= 65_536 && controls < 128,
+    "WS idle admission control/byte/time budget exceeded",
+  ))
+  use decoded <- result.try(frames.feed_one(
+    connection.decoder,
+    connection.pending,
+  ))
+  let next = Connection(..connection, decoder: decoded.0, pending: decoded.2)
+  use _ <- result.try(ensure(
+    frames.quiescent(next.decoder),
+    "WS idle admission encountered incomplete or fragmented data",
+  ))
+  case decoded.1 {
+    Some(frames.Ping(payload)) -> {
+      use pong <- result.try(frames.encode_pong(
+        frames.Client,
+        payload,
+        Some(random(4)),
+      ))
+      use _ <- result.try(write_until(
+        next.socket,
+        next.physical,
+        pong,
+        deadline,
+      ))
+      idle(next, deadline, reads, bytes, controls + 1)
+    }
+    Some(frames.Pong(_)) -> {
+      idle(next, deadline, reads, bytes, controls + 1)
+    }
+    Some(_) -> Error("WS idle admission encountered unsolicited data or close")
+    None -> Error("WS idle admission did not prove a complete control frame")
   }
 }
 
@@ -250,7 +364,12 @@ fn handle_event(
         payload,
         Some(random(4)),
       ))
-      use _ <- result.try(write(connection.socket, pong, connection.timeout_ms))
+      use _ <- result.try(write_until(
+        connection.socket,
+        connection.physical,
+        pong,
+        now_ms() + connection.timeout_ms,
+      ))
       Ok(None)
     }
     frames.Pong(_) -> Ok(None)
@@ -267,7 +386,13 @@ fn handle_event(
         )
       case reply {
         Ok(bytes) -> {
-          let _ = write(connection.socket, bytes, connection.timeout_ms)
+          let _ =
+            write_until(
+              connection.socket,
+              connection.physical,
+              bytes,
+              now_ms() + connection.timeout_ms,
+            )
           Error("WS peer closed connection")
         }
         Error(_) -> Error("WS peer closed connection")
@@ -281,12 +406,33 @@ pub fn close(connection: Connection) -> Nil {
     frames.encode_close(frames.Client, Some(1000), "", Some(random(4)))
   case frame {
     Ok(bytes) -> {
-      let _ = write(connection.socket, bytes, connection.timeout_ms)
+      let _ =
+        write_until(
+          connection.socket,
+          connection.physical,
+          bytes,
+          now_ms() + connection.timeout_ms,
+        )
       Nil
     }
     Error(_) -> Nil
   }
-  close_socket(connection.socket)
+  let _ = abort(connection)
+  Nil
+}
+
+/// Abortive physical TCP close/reset, including TLS, with positive public socket
+/// monitor evidence. Errors are explicit; Nil from compatibility close is not
+/// this proof. Never writes a close frame or calls potentially blocked ssl:close.
+pub fn abort(connection: Connection) -> Result(Nil, String) {
+  abort_socket(connection.physical, now_ms() + 100)
+}
+
+fn cleanup_error(connection: Connection, reason: String) -> Result(a, String) {
+  case abort(connection) {
+    Ok(_) -> Error(reason)
+    Error(reason) -> Error(reason)
+  }
 }
 
 fn parse_origin(endpoint: String) -> Result(Origin, String) {

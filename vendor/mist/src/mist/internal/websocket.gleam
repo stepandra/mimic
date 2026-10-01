@@ -2,7 +2,7 @@ import exception
 import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/erlang/atom
-import gleam/erlang/process.{type Selector}
+import gleam/erlang/process.{type Selector, type Subject}
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -38,11 +38,12 @@ pub type HandlerMessage(user_message) {
   User(user_message)
 }
 
-pub type WebsocketState(state) {
+pub type WebsocketState(state, user_message) {
   WebsocketState(
     buffer: BitArray,
     user: state,
     permessage_deflate: Option(Compression),
+    internal_selector: Selector(WebsocketMessage(user_message)),
   )
 }
 
@@ -88,6 +89,7 @@ pub fn initialize_connection(
   socket: Socket,
   transport: Transport,
   extensions: List(String),
+  ready: Subject(Subject(WebsocketMessage(user_message))),
 ) -> Result(actor.Started(process.Pid), actor.StartError) {
   let takeovers = websocket.get_context_takeovers(extensions)
   actor.new_with_initialiser(500, fn(subject) {
@@ -102,18 +104,21 @@ pub fn initialize_connection(
         deflate: option.map(compression, fn(compression) { compression.deflate }),
       )
     let #(initial_state, user_selector) = on_init(connection)
-    let selector = case user_selector {
+    // This actor subject carries retained upgrade bytes. Keep it together
+    // with the socket selectors across every user-selector replacement.
+    // gleam_otp discards/logs messages omitted by a replacement selector.
+    let internal_selector = message_selector() |> process.select(subject)
+    let selector = case map_user_selector(user_selector) {
       Some(user_selector) ->
-        user_selector
-        |> process.map_selector(UserMessage)
-        |> process.map_selector(Valid)
-        |> process.merge_selector(message_selector())
-      _ -> message_selector()
+        process.merge_selector(internal_selector, user_selector)
+      _ -> internal_selector
     }
+    process.send(ready, subject)
     WebsocketState(
       buffer: <<>>,
       user: initial_state,
       permessage_deflate: compression,
+      internal_selector:,
     )
     |> actor.initialised
     |> actor.selecting(selector)
@@ -157,7 +162,11 @@ pub fn initialize_connection(
                   WebsocketState(..state, buffer: rest, user: user_state),
                 )
               case selector {
-                Some(selector) -> actor.with_selector(next, selector)
+                Some(selector) ->
+                  actor.with_selector(
+                    next,
+                    process.merge_selector(state.internal_selector, selector),
+                  )
                 _ -> next
               }
             }
@@ -195,16 +204,14 @@ pub fn initialize_connection(
         |> result.map(fn(cont) {
           case cont {
             Continue(user_state, selector) -> {
-              let selector =
-                selector
-                |> map_user_selector
-                |> option.map(fn(with_user) {
-                  process.merge_selector(message_selector(), with_user)
-                })
               let next =
                 actor.continue(WebsocketState(..state, user: user_state))
-              case selector {
-                Some(selector) -> actor.with_selector(next, selector)
+              case map_user_selector(selector) {
+                Some(selector) ->
+                  actor.with_selector(
+                    next,
+                    process.merge_selector(state.internal_selector, selector),
+                  )
                 _ -> next
               }
             }
@@ -288,6 +295,18 @@ pub fn initialize_connection(
   })
 }
 
+// Called only after controlling_process succeeds. The retained bytes enter
+// the same decoder before the socket is re-armed, including a complete frame.
+pub fn receive_initial(
+  subject: Subject(WebsocketMessage(user_message)),
+  data: BitArray,
+) -> Nil {
+  case data {
+    <<>> -> Nil
+    _ -> process.send(subject, Valid(SocketMessage(data)))
+  }
+}
+
 fn apply_frames(
   frames: List(Frame),
   handler: Handler(state, user_message),
@@ -338,9 +357,6 @@ fn apply_frames(
             selector
             |> map_user_selector
             |> option.or(prev_selector)
-            |> option.map(fn(with_user) {
-              process.merge_selector(message_selector(), with_user)
-            })
 
           apply_frames(
             rest,

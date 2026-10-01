@@ -107,19 +107,29 @@ pub fn http_compact_ws_request_controls_test() {
     value(
       "{\"model\":\"grok-4.7\",\"input\":\"hello\",\"instructions\":\"keep\",\"previous_response_id\":\"resp_old\",\"stream\":false,\"background\":true,\"tools\":[{\"type\":\"function\",\"name\":\"run\"}],\"tool_choice\":\"auto\",\"temperature\":0.2,\"max_output_tokens\":200,\"reasoning\":{\"effort\":\"high\"},\"vendor_extension\":{\"keep\":true}}",
     )
-  let assert Ok(http) = request.prepare(config(), endpoint.Responses, body, "")
+  let stateless = tools.remove(body, ["previous_response_id"])
+  list.each(
+    [endpoint.Chat, endpoint.Responses, endpoint.Compact],
+    fn(operation) {
+      request.prepare(config(), operation, body, "") |> should.be_error
+    },
+  )
+  let assert Ok(http) =
+    request.prepare(config(), endpoint.Responses, stateless, "")
   ir.field(http.body, "stream") |> should.equal(Some(ir.Boolean(True)))
   ir.field(http.body, "previous_response_id") |> should.equal(None)
-  let assert Ok(compact) = request.prepare(config(), endpoint.Compact, body, "")
+  let assert Ok(compact) =
+    request.prepare(config(), endpoint.Compact, stateless, "")
   list.each(
     ["stream", "tools", "tool_choice", "temperature", "max_output_tokens"],
     fn(key) { ir.field(compact.body, key) |> should.equal(None) },
   )
-  ir.field(compact.body, "previous_response_id")
-  |> should.equal(Some(ir.String("resp_old")))
+  ir.field(compact.body, "previous_response_id") |> should.equal(None)
   let assert Ok(ws) = request.prepare(config(), endpoint.WebSocket, body, "")
   ir.field(ws.body, "type") |> should.equal(Some(ir.String("response.create")))
   ir.field(ws.body, "store") |> should.equal(Some(ir.Boolean(True)))
+  ir.field(ws.body, "previous_response_id")
+  |> should.equal(Some(ir.String("resp_old")))
   list.each(["stream", "background", "instructions"], fn(key) {
     ir.field(ws.body, key) |> should.equal(None)
   })

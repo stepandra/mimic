@@ -9,17 +9,26 @@ import mimic/fleet
 import mimic/gateway/refresh
 import mimic/ir
 import mimic/providers/claude/adapter as claude_adapter
+import mimic/providers/claude/client_profile as claude_profile
 import mimic/providers/claude/companion as claude_companion
 import mimic/providers/claude/json_guard as strict_json
+import mimic/providers/claude/policy as claude_policy
 import mimic/providers/codex/adapter as codex_adapter
 import mimic/providers/codex/models
 import mimic/providers/codex/oauth as codex_oauth
 import mimic/providers/contracts
+import mimic/providers/devin/configuration as devin_configuration
 import mimic/providers/kimi/models as kimi_models
 import mimic/providers/kimi/oauth as kimi_oauth
 import mimic/providers/kimi_compat/request as kimi_compat
+import mimic/providers/registry
 import mimic/providers/runtime
-import mimic/providers/xai/models as xai_models
+import mimic/providers/xai/bridge as xai_bridge
+import mimic/providers/xai/endpoint as xai_endpoint
+import mimic/providers/xai/enrollment as xai_enrollment
+import mimic/providers/xai/oauth as xai_oauth
+import mimic/providers/xai/operations as xai_operations
+import mimic/types.{type Capture, type Header, Header}
 
 pub type Config {
   Config(
@@ -31,6 +40,8 @@ pub type Config {
     codex_user_agent: String,
     codex_websocket: Bool,
     codex_http_continuation: Bool,
+    claude_quota_classification: Bool,
+    devin: devin_configuration.Configured,
   )
 }
 
@@ -44,6 +55,9 @@ pub type Account {
     egress: fleet.Egress,
     oauth: Option(OAuthConfig),
     base_path: String,
+    claude_policy: claude_policy.Policy,
+    claude_client_headers: List(Header),
+    xai_operations: List(xai_operations.Binding),
   )
 }
 
@@ -52,6 +66,7 @@ pub type OAuthConfig {
   ClaudeOAuth(auth.Config)
   ClaudeCompanionOAuth(auth.Config, claude_companion.Approved)
   KimiOAuth(kimi_oauth.Config)
+  XaiOAuth(xai_oauth.Config)
 }
 
 /// Configuration is secret-free. A configured model must have explicit codec
@@ -69,6 +84,7 @@ pub fn decode(source: String) -> Result(Config, String) {
     ir.required(value, "accounts") |> result.try(ir.as_array) |> safe,
   )
   use accounts <- result.try(list.try_map(entries, account))
+  use devin_catalog <- result.try(devin_configuration.from_root(value) |> safe)
   use catalog <- result.try(case ir.field(value, "codex_catalog") {
     None -> Ok(None)
     Some(raw) ->
@@ -85,6 +101,9 @@ pub fn decode(source: String) -> Result(Config, String) {
   )
   use http_continuation <- result.try(
     ir.optional_bool(value, "codex_http_continuation", False) |> safe,
+  )
+  use claude_quota_classification <- result.try(
+    ir.optional_bool(value, "claude_quota_classification", False) |> safe,
   )
   use _ <- result.try(
     case
@@ -135,10 +154,22 @@ pub fn decode(source: String) -> Result(Config, String) {
             Some(ClaudeOAuth(_)) | Some(ClaudeCompanionOAuth(_, _)) -> Ok(Nil)
             _ -> Error("Claude OAuth requires explicit endpoints")
           }
-        "xai", "api_key", _ ->
-          list.try_each(a.models, fn(model) {
-            xai_models.registration(model) |> safe |> result.map(fn(_) { Nil })
+        "xai", "api_key", _ | "xai", "oauth", _ -> {
+          use _ <- result.try(case a.auth_mode, a.oauth {
+            "api_key", None | "oauth", Some(XaiOAuth(_)) -> Ok(Nil)
+            _, _ -> Error("xAI OAuth requires explicit discovery")
           })
+          list.try_each(a.models, fn(model) {
+            xai_operations.registration(
+              a.id,
+              a.auth_mode,
+              a.xai_operations,
+              model,
+            )
+            |> safe
+            |> result.map(fn(_) { Nil })
+          })
+        }
         "openai-compatible-kimi", "api_key", _ ->
           list.try_each(a.models, fn(model) {
             kimi_compat.registration(model) |> safe |> result.map(fn(_) { Nil })
@@ -152,19 +183,32 @@ pub fn decode(source: String) -> Result(Config, String) {
             kimi_models.registration(model) |> safe |> result.map(fn(_) { Nil })
           })
         }
-        "devin", "session_token", _ if a.models == ["devin/swe-1-7"] -> Ok(Nil)
+        "devin", "session_token", _ ->
+          devin_configuration.enabled(devin_catalog, a.models)
+          |> safe
+          |> result.map(fn(_) { Nil })
         "codex", "oauth", Some(catalog) ->
           list.try_each(a.models, fn(model) {
             use item <- result.try(models.lookup(catalog, model) |> safe)
-            case item.responses_lite {
-              True -> Error("unsupported Codex Responses-lite model")
-              False -> Ok(Nil)
-            }
+            codex_adapter.registration(item)
+            |> safe
+            |> result.map(fn(_) { Nil })
           })
         _, _, _ ->
           Error("unsupported provider/auth mode or missing Codex catalog")
       }
     }),
+  )
+  use devin <- result.try(
+    devin_configuration.new(
+      devin_catalog,
+      accounts
+        |> list.filter(fn(a) { a.provider == "devin" })
+        |> list.map(fn(a) {
+          devin_configuration.Account(a.id, a.origin, a.models)
+        }),
+    )
+    |> safe,
   )
   Ok(Config(
     version,
@@ -175,6 +219,8 @@ pub fn decode(source: String) -> Result(Config, String) {
     agent,
     websocket,
     http_continuation,
+    claude_quota_classification,
+    devin,
   ))
 }
 
@@ -189,6 +235,17 @@ fn account(value: ir.Value) -> Result(Account, String) {
   use models <- result.try(
     list.try_map(raw_models, fn(v) { ir.as_string(v) |> safe }),
   )
+  use #(policy, client_headers) <- result.try(decode_claude_options(
+    value,
+    provider,
+    auth_mode,
+  ))
+  use operations <- result.try(decode_xai_options(
+    value,
+    provider,
+    auth_mode,
+    id,
+  ))
   use oauth <- result.try(case ir.field(value, "oauth") {
     None -> Ok(None)
     Some(raw) -> decode_oauth(provider, raw) |> result.map(Some)
@@ -273,7 +330,132 @@ fn account(value: ir.Value) -> Result(Account, String) {
     ))
     |> safe,
   )
-  Ok(Account(provider, auth_mode, id, origin, models, egress, oauth, base_path))
+  Ok(Account(
+    provider,
+    auth_mode,
+    id,
+    origin,
+    models,
+    egress,
+    oauth,
+    base_path,
+    policy,
+    client_headers,
+    operations,
+  ))
+}
+
+fn decode_xai_options(
+  value: ir.Value,
+  provider: String,
+  auth_mode: String,
+  account: String,
+) -> Result(List(xai_operations.Binding), String) {
+  case provider, ir.field(value, "xai_operations") {
+    "xai", None -> {
+      use _ <- result.try(
+        xai_operations.validate_account(account, auth_mode, []) |> safe,
+      )
+      Ok([])
+    }
+    "xai", Some(raw) -> xai_operations.decode(account, auth_mode, raw) |> safe
+    _, None -> Ok([])
+    _, Some(_) -> Error("xAI operations require an xAI account")
+  }
+}
+
+fn decode_claude_options(
+  value: ir.Value,
+  provider: String,
+  auth_mode: String,
+) -> Result(#(claude_policy.Policy, List(Header)), String) {
+  let raw_policy = ir.field(value, "claude_policy")
+  let raw_headers = ir.field(value, "claude_client_headers")
+  use _ <- result.try(
+    case provider == "claude" || { raw_policy == None && raw_headers == None } {
+      True -> Ok(Nil)
+      False ->
+        Error("Claude policy and client headers require a Claude account")
+    },
+  )
+  use policy <- result.try(case raw_policy {
+    None -> Ok(claude_policy.native())
+    Some(raw) -> {
+      use fields <- result.try(ir.as_object(raw) |> safe)
+      use _ <- result.try(case list.length(fields) == 3 {
+        True -> Ok(Nil)
+        False -> Error("Claude policy requires exactly input, turn and cache")
+      })
+      use input <- result.try(ir.string_field(raw, "input") |> safe)
+      use turn <- result.try(ir.string_field(raw, "turn") |> safe)
+      use cache <- result.try(ir.string_field(raw, "cache") |> safe)
+      use input <- result.try(case input {
+        "native" -> Ok(claude_policy.NativeMessages)
+        "translated" -> Ok(claude_policy.TranslatedMessages)
+        _ -> Error("unsupported Claude input policy")
+      })
+      use turn <- result.try(case turn {
+        "conversation" -> Ok(claude_policy.Conversation)
+        "subagent" -> Ok(claude_policy.Subagent)
+        "helper" -> Ok(claude_policy.Helper)
+        _ -> Error("unsupported Claude turn policy")
+      })
+      use cache <- result.try(case cache {
+        "preserve" -> Ok(claude_policy.PreserveCache)
+        "5m" -> Ok(claude_policy.DefaultFiveMinutes)
+        "1h" if auth_mode == "oauth" -> Ok(claude_policy.ApprovedOneHour)
+        _ -> Error("unsupported Claude cache policy")
+      })
+      Ok(claude_policy.Policy(input, turn, cache))
+    }
+  })
+  use _ <- result.try(claude_policy.validate(policy) |> safe)
+  use headers <- result.try(case raw_headers {
+    None -> Ok([])
+    Some(raw) -> {
+      use values <- result.try(ir.as_array(raw) |> safe)
+      list.try_map(values, fn(value) {
+        case value {
+          ir.Array([ir.String(name), ir.String(value)]) ->
+            Ok(Header(name, value))
+          _ -> Error("Claude client headers must be name/value pairs")
+        }
+      })
+    }
+  })
+  use _ <- result.try(claude_profile.validate_headers(headers) |> safe)
+  Ok(#(policy, headers))
+}
+
+/// Trusted policy is selected after the runtime chooses its actual account.
+/// Caller headers cannot select policy or authorize a different identity/origin.
+pub fn prepare_claude(
+  settings: Config,
+  context: contracts.Context,
+  req: contracts.Request,
+) -> Result(Capture, contracts.Failure) {
+  let denied = contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+  use account <- result.try(
+    list.find(settings.accounts, fn(account) {
+      account.id == context.account
+      && account.provider == "claude"
+      && context.provider == account.provider
+      && account.auth_mode == context.auth_mode
+      && account.origin == context.origin
+      && list.contains(account.models, req.model)
+    })
+    |> result.replace_error(denied),
+  )
+  use profile <- result.try(
+    claude_profile.from_operator(context, account.claude_client_headers)
+    |> result.replace_error(denied),
+  )
+  claude_adapter.prepare_with_policy(
+    context,
+    req,
+    account.claude_policy,
+    profile,
+  )
 }
 
 fn decode_oauth(
@@ -287,6 +469,7 @@ fn decode_oauth(
     },
   )
   case provider {
+    "xai" -> xai_enrollment.decode_config(raw) |> safe |> result.map(XaiOAuth)
     "kimi" -> {
       use domain <- result.try(ir.string_field(raw, "domain") |> safe)
       use device <- result.try(ir.string_field(raw, "device_url") |> safe)
@@ -386,6 +569,8 @@ pub fn runtime_accounts(config: Config) -> List(runtime.Account) {
           ))
         "kimi", Some(KimiOAuth(settings)) ->
           credential.Refreshable(kimi_oauth.refresher(settings, refresh.kimi))
+        "xai", Some(XaiOAuth(settings)) ->
+          xai_bridge.oauth_policy(settings, xai_enrollment.send)
         "codex", _ ->
           credential.Refreshable(
             contracts.Refresh(fn(_, _) { Error(contracts.RefreshUnsupported) }),
@@ -395,4 +580,115 @@ pub fn runtime_accounts(config: Config) -> List(runtime.Account) {
       },
     )
   })
+}
+
+/// Derived from immutable operator account bindings, never from caller headers.
+pub fn runtime_bindings(config: Config) -> List(runtime.EndpointBinding) {
+  config.accounts
+  |> list.flat_map(fn(account) {
+    xai_operations.runtime_bindings(account.xai_operations)
+  })
+}
+
+/// Select an auth partition only after this account admits the public operation.
+/// Existing same-operation mixed-auth priority remains configuration order.
+pub fn admits_operation(
+  account: Account,
+  model: String,
+  operation: String,
+) -> Bool {
+  case account.provider {
+    "xai" ->
+      xai_operations.registration(
+        account.id,
+        account.auth_mode,
+        account.xai_operations,
+        model,
+      )
+      |> result.map(fn(row) { list.contains(row.operations, operation) })
+      |> result.unwrap(False)
+    _ -> True
+  }
+}
+
+/// Union only the operation/auth rows actually admitted for configured accounts.
+pub fn xai_registration(
+  config: Config,
+  model: String,
+) -> Result(registry.Model, String) {
+  use rows <- result.try(
+    config.accounts
+    |> list.filter(fn(a) {
+      a.provider == "xai" && list.contains(a.models, model)
+    })
+    |> list.try_map(fn(a) {
+      xai_operations.registration(a.id, a.auth_mode, a.xai_operations, model)
+    }),
+  )
+  case rows {
+    [] -> Error("configured xAI model required")
+    [first, ..] ->
+      Ok(
+        registry.Model(
+          ..first,
+          auth_modes: list.unique(
+            list.flat_map(rows, fn(row) { row.auth_modes }),
+          ),
+          protocols: list.unique(list.flat_map(rows, fn(row) { row.protocols })),
+          operations: list.unique(
+            list.flat_map(rows, fn(row) { row.operations }),
+          ),
+          capabilities: list.unique(
+            list.flat_map(rows, fn(row) { row.capabilities }),
+          ),
+        ),
+      )
+  }
+}
+
+/// Runtime-selected operation origins are authoritative only through the exact
+/// configured account binding. Legacy API-key accounts retain their own origin.
+pub fn xai_endpoint(
+  config: Config,
+  context: contracts.Context,
+  request: contracts.Request,
+) -> Result(xai_endpoint.Config, contracts.Failure) {
+  let denied = contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+  use account <- result.try(
+    list.find(config.accounts, fn(a) {
+      a.provider == "xai"
+      && context.provider == a.provider
+      && request.provider == a.provider
+      && a.id == context.account
+      && a.auth_mode == context.auth_mode
+      && request.auth_mode == a.auth_mode
+      && list.contains(a.models, request.model)
+    })
+    |> result.replace_error(denied),
+  )
+  case account.auth_mode, account.xai_operations {
+    "api_key", [] -> {
+      use _ <- result.try(case context.origin == account.origin {
+        True -> Ok(Nil)
+        False -> Error(denied)
+      })
+      Ok(
+        xai_endpoint.Config(
+          xai_endpoint.ApiKey,
+          True,
+          False,
+          Some(account.origin <> "/v1"),
+          Some(account.origin <> "/v1"),
+          None,
+          case account.egress {
+            fleet.LocalLoopback -> xai_endpoint.LocalMock
+            _ -> xai_endpoint.VerifiedTls
+          },
+        ),
+      )
+    }
+    _, bindings ->
+      xai_operations.select(bindings, context, request)
+      |> result.replace_error(denied)
+  }
 }

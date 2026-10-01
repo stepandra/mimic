@@ -6,6 +6,7 @@ import gleam/result
 import gleam/string
 import mimic/dialect/responses
 import mimic/ir
+import mimic/protocol/responses/sparse
 import mimic/protocol/sse
 
 pub type Outcome {
@@ -24,6 +25,26 @@ pub type Event {
 /// transport chunk. An Error next contains no reusable stream state.
 pub type Batch {
   Batch(events: List(Event), next: Result(Stream, String))
+}
+
+/// Trusted construction policy, never inferred from a client "lite" hint.
+pub type Policy {
+  Strict
+  NativeSparse(
+    projection: sparse.Projection,
+    max_observation_bytes: Int,
+    max_events: Int,
+  )
+}
+
+/// Validated original JSON data, or explicitly selected hydrated JSON data.
+/// This is deliberately not a terminal response or a continuation receipt.
+pub opaque type WireEvent {
+  WireEvent(event: Event, data: String, report: Option(sparse.Report))
+}
+
+pub type WireBatch {
+  WireBatch(events: List(WireEvent), next: Result(Stream, String))
 }
 
 type Item {
@@ -53,6 +74,7 @@ pub opaque type Stream {
     max_frame_bytes: Int,
     max_items: Int,
     max_parts: Int,
+    sparse_state: Option(sparse.Observer),
   )
 }
 
@@ -75,7 +97,43 @@ pub fn new_with_limits(
     max_frame_bytes,
     max_items,
     max_parts,
+    None,
   )
+}
+
+pub fn new_with_policy(policy: Policy) -> Result(Stream, String) {
+  new_with_policy_and_limits(policy, 1_048_576, 4096, 4096)
+}
+
+pub fn new_with_policy_and_limits(
+  policy: Policy,
+  max_frame_bytes: Int,
+  max_items: Int,
+  max_parts: Int,
+) -> Result(Stream, String) {
+  use _ <- result.try(ensure(
+    max_frame_bytes > 0
+      && max_frame_bytes <= 1_048_576
+      && max_items > 0
+      && max_items <= 4096
+      && max_parts > 0
+      && max_parts <= 4096,
+    "invalid Responses frame/item/part limits",
+  ))
+  let state = new_with_limits(max_frame_bytes, max_items, max_parts)
+  case policy {
+    Strict -> Ok(state)
+    NativeSparse(projection, bytes, events) -> {
+      use observer <- result.try(sparse.new(
+        projection,
+        bytes,
+        events,
+        max_items,
+        max_parts,
+      ))
+      Ok(Stream(..state, sparse_state: Some(observer)))
+    }
+  }
 }
 
 /// Processes one transport chunk atomically. On Error discard this operation's
@@ -92,23 +150,30 @@ pub fn feed(
 /// Streaming callers should prefer this over atomic feed: TCP chunk boundaries
 /// must not decide whether a valid prefix is delivered before a later failure.
 pub fn feed_partial(stream: Stream, chunk: BitArray) -> Batch {
+  let batch = feed_wire_partial(stream, chunk)
+  Batch(list.map(batch.events, wire_event), batch.next)
+}
+
+/// Same decoder and valid-prefix rule, retaining the JSON event-data bytes.
+/// SSE field spelling/comments are framing, not part of JSON data fidelity.
+pub fn feed_wire_partial(stream: Stream, chunk: BitArray) -> WireBatch {
   partial_frames(stream, chunk, [])
 }
 
 fn partial_frames(
   stream: Stream,
   chunk: BitArray,
-  events: List(Event),
-) -> Batch {
+  events: List(WireEvent),
+) -> WireBatch {
   case sse.feed_one(stream.framing, chunk) {
-    Error(error) -> Batch(list.reverse(events), Error(error))
+    Error(error) -> WireBatch(list.reverse(events), Error(error))
     Ok(#(framing, frame, rest)) -> {
       let stream = Stream(..stream, framing: framing)
       case frame {
-        None -> Batch(list.reverse(events), Ok(stream))
+        None -> WireBatch(list.reverse(events), Ok(stream))
         Some(frame) ->
           case dispatch(stream, frame) {
-            Error(error) -> Batch(list.reverse(events), Error(error))
+            Error(error) -> WireBatch(list.reverse(events), Error(error))
             Ok(#(next, event)) ->
               partial_frames(next, rest, case event {
                 None -> events
@@ -123,7 +188,7 @@ fn partial_frames(
 fn dispatch(
   stream: Stream,
   frame: sse.Frame,
-) -> Result(#(Stream, Option(Event)), String) {
+) -> Result(#(Stream, Option(WireEvent)), String) {
   let sse.Frame(name, data) = frame
   case data {
     "" -> Ok(#(stream, None))
@@ -141,8 +206,12 @@ fn dispatch(
         name == "" || name == actual,
         "Responses SSE event name disagrees with JSON type",
       ))
-      use pair <- result.try(push(stream, document))
-      Ok(#(pair.0, Some(pair.1)))
+      use pair <- result.try(push_observed(
+        stream,
+        document,
+        bit_array.byte_size(bit_array.from_string(data)),
+      ))
+      Ok(#(pair.0, Some(wire(pair.0, pair.1, document, data))))
     }
   }
 }
@@ -152,6 +221,18 @@ fn dispatch(
 pub fn push(
   stream: Stream,
   document: ir.Value,
+) -> Result(#(Stream, Event), String) {
+  push_observed(
+    stream,
+    document,
+    bit_array.byte_size(bit_array.from_string(ir.stringify(document))),
+  )
+}
+
+fn push_observed(
+  stream: Stream,
+  document: ir.Value,
+  observed_bytes: Int,
 ) -> Result(#(Stream, Event), String) {
   use _ <- result.try(ensure(
     stream.outcome == None,
@@ -178,8 +259,99 @@ pub fn push(
     None -> stream
     Some(_) -> Stream(..stream, sequence: sequence)
   }
-  use stream <- result.try(apply_event(stream, name, document))
-  Ok(#(stream, Event(name, document)))
+  case stream.sparse_state {
+    None -> {
+      use stream <- result.try(apply_event(stream, name, document))
+      Ok(#(stream, Event(name, document)))
+    }
+    Some(observer) -> {
+      use pair <- result.try(sparse.observe(
+        observer,
+        name,
+        document,
+        observed_bytes,
+      ))
+      use _ <- result.try(ensure(
+        bit_array.byte_size(bit_array.from_string(ir.stringify(pair.1)))
+          <= stream.max_frame_bytes,
+        "Responses projected event exceeds byte limit",
+      ))
+      let outcome = case sparse.report(pair.0) {
+        None -> None
+        Some(report) ->
+          Some(case name, sparse.status(report) {
+            "error", _ -> RemoteError
+            _, responses.Completed -> Completed
+            _, responses.Incomplete -> Incomplete
+            _, responses.Failed -> Failed
+            _, _ -> Cancelled
+          })
+      }
+      Ok(#(
+        Stream(..stream, sparse_state: Some(pair.0), outcome: outcome),
+        Event(name, pair.1),
+      ))
+    }
+  }
+}
+
+/// WS text and SSE event data use one JSON decoder and the same observer.
+pub fn push_json(
+  stream: Stream,
+  data: String,
+) -> Result(#(Stream, WireEvent), String) {
+  use _ <- result.try(ensure(
+    bit_array.byte_size(bit_array.from_string(data)) <= stream.max_frame_bytes,
+    "Responses event exceeds byte limit",
+  ))
+  use document <- result.try(ir.parse(data))
+  use pair <- result.try(push_observed(
+    stream,
+    document,
+    bit_array.byte_size(bit_array.from_string(data)),
+  ))
+  Ok(#(pair.0, wire(pair.0, pair.1, document, data)))
+}
+
+fn wire(
+  state: Stream,
+  event: Event,
+  original: ir.Value,
+  data: String,
+) -> WireEvent {
+  let data = case event.document == original {
+    True -> data
+    False -> ir.stringify(event.document)
+  }
+  WireEvent(event, data, terminal_report(state))
+}
+
+pub fn wire_event(event: WireEvent) -> Event {
+  event.event
+}
+
+pub fn wire_data(event: WireEvent) -> String {
+  event.data
+}
+
+pub fn wire_report(event: WireEvent) -> Option(sparse.Report) {
+  event.report
+}
+
+pub fn encode_wire_event(event: WireEvent) -> String {
+  let data =
+    event.data
+    |> string.split("\n")
+    |> list.map(fn(line) { "data: " <> line })
+    |> string.join("\n")
+  "event: " <> event.event.name <> "\n" <> data <> "\n\n"
+}
+
+pub fn terminal_report(state: Stream) -> Option(sparse.Report) {
+  case state.sparse_state {
+    None -> None
+    Some(observer) -> sparse.report(observer)
+  }
 }
 
 fn apply_event(
@@ -632,13 +804,14 @@ pub fn finish(stream: Stream) -> Result(Outcome, String) {
 
 pub fn cancel(stream: Stream) -> Stream {
   case stream.outcome {
-    Some(_) -> stream
+    Some(_) -> Stream(..stream, sparse_state: None)
     None ->
       Stream(
         ..stream,
         framing: sse.reset(stream.framing),
         items: dict.new(),
         outcome: Some(Cancelled),
+        sparse_state: None,
       )
   }
 }

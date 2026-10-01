@@ -2,6 +2,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import mimic/protocol/responses/sparse
 import mimic/protocol/responses/stream
 import mimic/types.{type Header}
 
@@ -21,6 +22,14 @@ pub type Failure(upstream_error) {
 pub fn open_sse(
   status: Int,
   headers: List(Header),
+) -> Result(stream.Stream, String) {
+  open_sse_with_policy(status, headers, stream.Strict)
+}
+
+pub fn open_sse_with_policy(
+  status: Int,
+  headers: List(Header),
+  policy: stream.Policy,
 ) -> Result(stream.Stream, String) {
   use _ <- result.try(case status >= 200 && status < 300 {
     True -> Ok(Nil)
@@ -68,7 +77,7 @@ pub fn open_sse(
       }
     _ -> Error("ambiguous Responses Content-Encoding")
   })
-  Ok(stream.new())
+  stream.new_with_policy(policy)
 }
 
 fn values(headers: List(Header), name: String) -> List(String) {
@@ -109,6 +118,77 @@ pub fn run_fold(
   emit: fn(accumulator, stream.Event) -> Result(#(accumulator, Control), String),
 ) -> Result(#(stream.Outcome, accumulator), Failure(upstream_error)) {
   pump(state, handle, next, cancel, True, initial, emit)
+}
+
+/// Wire completion is distinct from reconstruction/receipt eligibility. A
+/// terminal report on an emitted event is provisional until this returns at
+/// clean EOF. Failure returns no report/accumulator; Cancel returns no authority.
+pub fn run_wire_fold(
+  state: stream.Stream,
+  handle: handle,
+  next: fn(handle) -> Result(Option(#(BitArray, handle)), upstream_error),
+  cancel: fn(handle) -> Nil,
+  initial: accumulator,
+  emit: fn(accumulator, stream.WireEvent) ->
+    Result(#(accumulator, Control), String),
+) -> Result(
+  #(stream.Outcome, Option(sparse.Report), accumulator),
+  Failure(upstream_error),
+) {
+  case next(handle) {
+    Error(error) -> {
+      cancel(handle)
+      Error(Upstream(error))
+    }
+    Ok(None) -> {
+      cancel(handle)
+      stream.finish(state)
+      |> result.map(fn(outcome) {
+        #(outcome, stream.terminal_report(state), initial)
+      })
+      |> result.map_error(Protocol)
+    }
+    Ok(Some(#(bytes, current))) -> {
+      let batch = stream.feed_wire_partial(state, bytes)
+      case deliver_wire(batch.events, initial, emit) {
+        Error(error) -> {
+          cancel(current)
+          Error(Downstream(error))
+        }
+        Ok(#(accumulated, Cancel)) -> {
+          cancel(current)
+          Ok(#(stream.Cancelled, None, accumulated))
+        }
+        Ok(#(accumulated, Continue)) ->
+          case batch.next {
+            Error(error) -> {
+              cancel(current)
+              Error(Protocol(error))
+            }
+            Ok(state) ->
+              run_wire_fold(state, current, next, cancel, accumulated, emit)
+          }
+      }
+    }
+  }
+}
+
+fn deliver_wire(
+  events: List(stream.WireEvent),
+  accumulated: accumulator,
+  emit: fn(accumulator, stream.WireEvent) ->
+    Result(#(accumulator, Control), String),
+) -> Result(#(accumulator, Control), String) {
+  case events {
+    [] -> Ok(#(accumulated, Continue))
+    [event, ..rest] -> {
+      use pair <- result.try(emit(accumulated, event))
+      case pair.1 {
+        Cancel -> Ok(pair)
+        Continue -> deliver_wire(rest, pair.0, emit)
+      }
+    }
+  }
 }
 
 fn pump(

@@ -73,6 +73,22 @@ pub fn user_prompt(device: Device) -> #(String, String) {
   #(device.user_code, device.verification_uri)
 }
 
+/// Same clock domain as start/poll. Exposes no private device code.
+pub fn device_deadline(device: Device) -> Int {
+  device.deadline_ms
+}
+
+fn contains_private_code(value: String, code: String) -> Bool {
+  string.contains(value, code)
+  || string.contains(value, uri.percent_encode(code))
+  || case uri.percent_decode(value) {
+    Ok(decoded) ->
+      string.contains(decoded, code)
+      || string.contains(decoded, uri.percent_encode(code))
+    Error(_) -> True
+  }
+}
+
 pub fn http_send(
   req: request.Request(String),
 ) -> Result(response.Response(String), String) {
@@ -147,6 +163,11 @@ pub fn start(
   case
     string.trim(code) == ""
     || string.trim(user) == ""
+    || string.byte_size(code) > 16_384
+    || string.byte_size(user) > 256
+    || string.byte_size(verification) > 2048
+    || contains_private_code(user, code)
+    || contains_private_code(verification, code)
     || expires <= 0
     || interval <= 0
   {
@@ -171,6 +192,19 @@ pub fn poll(
   device: Device,
   send: Send,
   now_ms: Int,
+  cancelled: Bool,
+) -> Result(Poll, String) {
+  poll_at(config, device, send, now_ms, now_ms, cancelled)
+}
+
+/// Enrollment schedules with a monotonic clock, but credentials persist an
+/// epoch expiry. Legacy callers of poll retain their single-clock semantics.
+pub fn poll_at(
+  config: Config,
+  device: Device,
+  send: Send,
+  now_ms: Int,
+  credential_now_ms: Int,
   cancelled: Bool,
 ) -> Result(Poll, String) {
   case cancelled {
@@ -205,7 +239,7 @@ pub fn poll(
             True -> Ok(Nil)
             False -> Error("xAI device token rejected")
           })
-          token(body, "", now_ms) |> result.map(Authorized)
+          token(body, "", credential_now_ms) |> result.map(Authorized)
         }
         _ -> Error("xAI device token rejected")
       }

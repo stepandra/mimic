@@ -322,15 +322,13 @@ pub fn codex_http_expired_receipt_rejected_before_network_test() {
   })
 }
 
-pub fn codex_http_lite_header_intent_and_metadata_share_scoped_history_test() {
+pub fn codex_http_lite_intent_cannot_expand_a_non_lite_catalog_model_test() {
   with_runtime(fn(provider, _, observations) {
     let cache = cache()
     let initial =
       contracts.Request(..req(fixtures.request), operation: "responses/lite")
-    let assert Ok(opened) =
-      http.open(provider, cache, config("tenant"), None, initial)
-    http.status(opened) |> should.equal(200)
-    let assert Ok(response.Completed(_)) = http.consume(opened)
+    http.open(provider, cache, config("tenant"), None, initial)
+    |> should.be_error
     let assert Ok(body) = ir.parse(fixtures.continuation)
     let body =
       normalize.put(
@@ -345,13 +343,11 @@ pub fn codex_http_lite_header_intent_and_metadata_share_scoped_history_test() {
       )
     let follow =
       contracts.Request(..req(ir.stringify(body)), pinned_account: None)
-    let assert Ok(opened) =
-      http.open(provider, cache, config("tenant"), None, follow)
-    let assert Ok(response.Completed(_)) =
-      http.forward(opened, fn(_) { Ok(pump.Continue) })
-    list.each([1, 4], fn(length) {
-      process.receive(observations, 1000) |> should.equal(Ok(#(length, True)))
-    })
+    http.open(provider, cache, config("tenant"), None, follow)
+    |> should.be_error
+    // Pinned gpt-5.5 has use_responses_lite:false. Source-qualified positive
+    // cases use gpt-5.6-sol in codex_http_lite_test, not this strict fixture.
+    process.receive(observations, 10) |> should.be_error
     continuation.stop(cache) |> should.be_ok
   })
 }

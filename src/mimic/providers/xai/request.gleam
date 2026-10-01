@@ -3,6 +3,7 @@ import gleam/option.{None, Some}
 import gleam/result
 import mimic/ir
 import mimic/providers/xai/endpoint
+import mimic/providers/xai/http_continuation
 import mimic/providers/xai/models
 import mimic/providers/xai/tools
 
@@ -19,6 +20,11 @@ pub fn prepare(
   conversation: String,
 ) -> Result(Prepared, String) {
   use _ <- result.try(ir.as_object(document))
+  use _ <- result.try(case operation {
+    endpoint.Chat | endpoint.Responses | endpoint.Compact ->
+      http_continuation.validate(document)
+    endpoint.WebSocket -> Ok(Nil)
+  })
   use model <- result.try(ir.string_field(document, "model"))
   let effort = case ir.field(document, "reasoning") {
     Some(reasoning) -> ir.optional_string(reasoning, "effort")
@@ -53,9 +59,7 @@ pub fn prepare(
   }
   let body = case operation {
     endpoint.Chat | endpoint.Responses ->
-      body
-      |> tools.remove(["previous_response_id"])
-      |> tools.set("stream", ir.Boolean(True))
+      tools.set(body, "stream", ir.Boolean(True))
     endpoint.Compact ->
       body
       |> tools.remove([

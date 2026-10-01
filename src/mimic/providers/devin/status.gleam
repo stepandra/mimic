@@ -14,6 +14,8 @@ import mimic/types.{Header}
 
 pub const get_user_status_path = "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
 
+pub const max_response_bytes = 4_194_304
+
 pub type Observation {
   Observation(
     observed_at_ms: Int,
@@ -45,7 +47,7 @@ pub fn request(
   use _ <- result.try(
     case
       session_token != ""
-      && string.length(session_token) <= 16_384
+      && string.byte_size(session_token) <= 16_384
       && !string.contains(session_token, "\r")
       && !string.contains(session_token, "\n")
       && !string.contains(session_token, "\t")
@@ -114,7 +116,7 @@ pub fn decode(
     case
       observed_at_ms >= 0
       && bit_array.byte_size(body) > 0
-      && bit_array.byte_size(body) <= 4_194_304
+      && bit_array.byte_size(body) <= max_response_bytes
     {
       True -> Ok(Nil)
       False -> Error("Invalid Devin status observation")
@@ -175,10 +177,10 @@ fn decode_plan(
 ) -> Result(Observation, String) {
   use fields <- result.try(fields(body))
   use info <- result.try(optional_message(fields, 1))
-  use daily <- result.try(optional_int(fields, 14))
-  use weekly <- result.try(optional_int(fields, 15))
-  use daily_reset <- result.try(optional_int(fields, 17))
-  use weekly_reset <- result.try(optional_int(fields, 18))
+  use daily <- result.try(percent(fields, 14))
+  use weekly <- result.try(percent(fields, 15))
+  use daily_reset <- result.try(timestamp(fields, 17))
+  use weekly_reset <- result.try(timestamp(fields, 18))
   use start <- result.try(optional_message(fields, 2))
   use end <- result.try(optional_message(fields, 3))
   use start_seconds <- result.try(seconds(start))
@@ -188,8 +190,8 @@ fn decode_plan(
       ..base,
       daily_remaining_percent: daily,
       weekly_remaining_percent: weekly,
-      daily_reset_seconds: positive(daily_reset),
-      weekly_reset_seconds: positive(weekly_reset),
+      daily_reset_seconds: daily_reset,
+      weekly_reset_seconds: weekly_reset,
       plan_start_seconds: start_seconds,
       plan_end_seconds: end_seconds,
     )
@@ -223,16 +225,28 @@ fn seconds(message: Option(BitArray)) -> Result(Option(Int), String) {
     None -> Ok(None)
     Some(bytes) -> {
       use fields <- result.try(fields(bytes))
-      use value <- result.try(optional_int(fields, 1))
-      Ok(positive(value))
+      timestamp(fields, 1)
     }
   }
 }
 
-fn positive(value: Option(Int)) -> Option(Int) {
+fn percent(fields: List(pb.Field), tag: Int) -> Result(Option(Int), String) {
+  use value <- result.try(optional_int(fields, tag))
   case value {
-    Some(n) if n > 0 -> Some(n)
-    _ -> None
+    None -> Ok(None)
+    Some(n) if n >= 0 && n <= 100 -> Ok(Some(n))
+    _ -> Error("Invalid Devin status protobuf")
+  }
+}
+
+/// CPA uses positive Unix seconds, with zero meaning unset, not a duration,
+/// grant expiry or inferred cooldown. Reject encoded negative/int64 overflow.
+fn timestamp(fields: List(pb.Field), tag: Int) -> Result(Option(Int), String) {
+  use value <- result.try(optional_int(fields, tag))
+  case value {
+    None | Some(0) -> Ok(None)
+    Some(n) if n > 0 && n <= 9_223_372_036_854_775_807 -> Ok(Some(n))
+    _ -> Error("Invalid Devin status protobuf")
   }
 }
 
@@ -315,6 +329,11 @@ fn valid_origin(origin: String) -> Result(Nil, String) {
   use parsed <- result.try(
     uri.parse(origin) |> result.replace_error("Invalid Devin status origin"),
   )
+  use _ <- result.try(case parsed.port {
+    None -> Ok(Nil)
+    Some(port) if port > 0 && port < 65_536 -> Ok(Nil)
+    _ -> Error("Invalid Devin status origin")
+  })
   case parsed {
     uri.Uri(
       scheme: Some("https"),

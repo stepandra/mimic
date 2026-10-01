@@ -1,0 +1,85 @@
+# F24 baseline dd15c610: artifact only; parent owns application/admission.
+# No F27 dependency, config or CLI edit. Preserve all admitted F22/F23 files.
+diff --git a/src/mimic/gateway.gleam b/src/mimic/gateway.gleam
+--- a/src/mimic/gateway.gleam
++++ b/src/mimic/gateway.gleam
+@@ -42,6 +42,7 @@
+ import mimic/providers/devin/auth as devin_auth
+ import mimic/providers/devin/bridge as devin
+ import mimic/providers/devin/chat_gateway as devin_chat
++import mimic/providers/devin/messages_gateway as devin_messages
+ import mimic/providers/kimi/adapter as kimi
+ import mimic/providers/kimi/models as kimi_models
+ import mimic/providers/kimi/oauth as kimi_oauth
+@@ -420,7 +421,7 @@
+           ),
+         )
+       }
+-      #("devin", model) -> devin_chat.registration(model) |> sanitized
++      #("devin", model) -> devin_messages.combined_registration(model) |> sanitized
+       #("xai", model) ->
+         xai_models.registration_for(
+           model,
+@@ -606,7 +607,11 @@
+                 a.provider == provider
+                 || {
+                   provider == "messages"
+-                  && { a.provider == "claude" || a.provider == "kimi" }
++                  && {
++                    a.provider == "claude"
++                    || a.provider == "kimi"
++                    || a.provider == "devin"
++                  }
+                 }
+                 || {
+                   provider == "chat"
+@@ -631,6 +636,7 @@
+             Error(_) -> reject(422, "unsupported model")
+             Ok(account) -> {
+               let provider = account.provider
++              let client_operation = operation
+               let operation = case provider {
+                 "devin" -> "generate"
+                 _ -> operation
+@@ -648,6 +654,8 @@
+                   model,
+                   case provider {
+                     "claude" -> "messages"
++                    "devin" if client_operation == "messages" ->
++                      "anthropic-messages"
+                     "devin" -> "openai-chat"
+                     "kimi" if operation == "messages" -> "anthropic"
+                     "kimi" if operation == "chat/completions" -> "chat"
+@@ -661,7 +669,7 @@
+                   None,
+                   body,
+                 )
+-              case provider, operation, stream {
++              case provider, client_operation, stream {
+                 "claude", "messages", _
+                 | "claude", "messages/count_tokens", False
+                 -> serve_claude(req, engine, request, stream)
+@@ -675,9 +683,21 @@
+                 -> serve_kimi(req, config, engine, request, stream)
+                 "openai-compatible-kimi", "chat/completions", _ ->
+                   serve_kimi_compat(req, config, engine, request, stream)
+-                "devin", "generate", True ->
++                "devin", "messages", True ->
++                  devin_messages.serve(req, engine, None, request)
++                "devin", "messages", False ->
++                  case devin_messages.execute(engine, None, request) {
++                    Ok(body) -> reply(200, body, "application/json")
++                    Error(contracts.Failure(
++                      contracts.Unsupported,
++                      contracts.NotSent,
++                      _,
++                    )) -> reject(422, "unsupported Devin Messages request")
++                    Error(_) -> reject(503, "provider unavailable")
++                  }
++                "devin", "chat/completions", True ->
+                   devin_chat.serve(req, engine, None, request)
+-                "devin", "generate", False ->
++                "devin", "chat/completions", False ->
+                   case devin.execute(engine, None, request) {
+                     Ok(body) -> reply(200, body, "application/json")
+                     Error(_) -> reject(503, "provider unavailable")

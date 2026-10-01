@@ -33,11 +33,25 @@ pub fn from_operator(
       context.provider == "claude"
       && context.account != ""
       && context.session_key != ""
+      && list.contains(["api_key", "oauth"], context.auth_mode)
     {
       True -> Ok(Nil)
       False -> Error("Invalid Claude profile scope")
     },
   )
+  use _ <- result.try(validate_headers(headers))
+  Ok(Approved(
+    context.account,
+    context.auth_mode,
+    context.origin,
+    context.session_key,
+    headers,
+  ))
+}
+
+/// One allowlist/ambiguity rule for operator approval and ordered-wire input.
+/// This validates data only; it cannot authorize a caller or select a policy.
+pub fn validate_headers(headers: List(Header)) -> Result(Nil, String) {
   use _ <- result.try(
     list.try_map(headers, fn(header) {
       case allowed(header.name) && safe(header.value) {
@@ -51,14 +65,7 @@ pub fn from_operator(
     |> list.map(fn(header) { string.lowercase(header.name) })
     |> list.filter(fn(name) { name != "anthropic-beta" })
   case list.length(names) == list.length(list.unique(names)) {
-    True ->
-      Ok(Approved(
-        context.account,
-        context.auth_mode,
-        context.origin,
-        context.session_key,
-        headers,
-      ))
+    True -> Ok(Nil)
     False -> Error("Duplicate Claude client identity header")
   }
 }

@@ -4,6 +4,7 @@
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,10 @@ WORK = ROOT / ".tools/native-clients"
 LOCK = json.loads((HERE / "clients.lock.json").read_text())
 SCHEMA = "mimic.native-clients/v1"
 WORKFLOWS = ["sse", "tool", "continuation", "cancel"]
+_boundary_spec = importlib.util.spec_from_file_location(
+    "mimic_f02_bridge", ROOT / "scripts/containment/bridge.py")
+containment = importlib.util.module_from_spec(_boundary_spec)
+_boundary_spec.loader.exec_module(containment)
 
 
 class Blocked(Exception):
@@ -203,6 +208,7 @@ def shipment_copy(source, destination):
 
 
 def container_args(name, image, shipment, client, workflow):
+    """Historical argument fixture only; never used by qualifying execution."""
     return ["run", "--name", name, "--pull", "never", "--platform", "linux/amd64",
             "--network", "none", "--read-only", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges", "--pids-limit", "256",
@@ -214,7 +220,7 @@ def container_args(name, image, shipment, client, workflow):
             image, "--client", client, "--workflow", workflow, "--request-id", name]
 
 
-def offline(shipment, clients, workflows):
+def offline(shipment, clients, workflows, docker_path=None, docker_socket=None):
     report = {"schema": SCHEMA, "evidence_class": "native-client/local-upstream",
               "synthetic": True, "live": "not_run", "cpa_differential": "not_run",
               "source_base_revision": "3e00808ff0fefbb6728edb1769c17139ef0fd93a",
@@ -237,7 +243,8 @@ def offline(shipment, clients, workflows):
         report["status"] = "blocked"
         return report
     try:
-        require_docker()
+        if not docker_path or not docker_socket:
+            raise Blocked("explicit_f02_docker_executable_and_socket_required")
         try:
             receipt = json.loads((WORK / "acquisition.json").read_text())
         except (OSError, ValueError) as error:
@@ -252,8 +259,8 @@ def offline(shipment, clients, workflows):
         if (not isinstance(image, str) or not image.startswith("sha256:") or len(image) != 71
                 or any(char not in "0123456789abcdef" for char in image[7:])):
             raise Blocked("immutable_image_id_required")
-        if docker(["image", "inspect", image]).returncode:
-            raise Blocked("acquired_image_missing")
+        # F02 validates this immutable local image against the explicitly
+        # selected socket. Never preflight one daemon then execute on another.
         report["acquisition"] = receipt
         with tempfile.TemporaryDirectory(prefix="shipment-", dir=WORK) as temporary:
             report["shipment_sha256"] = shipment_copy(shipment, Path(temporary))
@@ -265,22 +272,26 @@ def offline(shipment, clients, workflows):
                     binding = contract.provenance(
                         LOCK["clients"][client], receipt["inputs"], report["shipment_sha256"],
                         LOCK["clients"][client]["executable_sha256"])
+                    # One leader owns the complete fixture + gateway + client
+                    # session inside F02. No host fixture or client is spawned.
+                    # Shipment is embedded in the approved image, never mounted
+                    # from this staging directory; the harness compares its hash
+                    # BEFORE starting gateway/native children.
+                    result = containment.session(
+                        docker_path, docker_socket, image, "/usr/local/bin/python3",
+                        ["/qa/harness.py", "--client", client, "--workflow", workflow,
+                         "--request-id", name, "--shipment-sha256", report["shipment_sha256"]],
+                        [39011, 39012], [39011, 39012])
                     try:
-                        result = docker(container_args(name, image, temporary, client, workflow),
-                                        timeout=120)
-                        try:
-                            evidence = contract.validate(
-                                result.stdout, result.returncode, client, workflow, name, binding)
-                        except (ValueError, TypeError, RecursionError):
-                            evidence = {"client": client, "workflow": workflow,
-                                        "status": "failed", "reason": "invalid_container_report"}
-                        report["results"].append({
-                            **evidence,
-                            "pin": LOCK["clients"][client], "container_exit": result.returncode})
-                    finally:
-                        if docker(["rm", "--force", name]).returncode:
-                            raise Blocked("container_cleanup_failed")
-    except Blocked as error:
+                        evidence = contract.validate(
+                            result.stdout, result.returncode, client, workflow, name, binding)
+                    except (ValueError, TypeError, RecursionError):
+                        evidence = {"client": client, "workflow": workflow,
+                                    "status": "failed", "reason": "invalid_container_report"}
+                    report["results"].append({
+                        **evidence,
+                        "pin": LOCK["clients"][client], "container_exit": result.returncode})
+    except (Blocked, containment.Blocked) as error:
         report["blocked_reason"] = str(error)
         done = {(row["client"], row["workflow"]) for row in report["results"]}
         for client in clients:
@@ -304,6 +315,8 @@ def main():
     execution.add_argument("--shipment", type=Path, required=True)
     execution.add_argument("--client", choices=["claude", "codex", "all"], default="all")
     execution.add_argument("--workflow", choices=[*WORKFLOWS, "all"], default="sse")
+    execution.add_argument("--docker-path", type=Path)
+    execution.add_argument("--docker-socket", type=Path)
     args = parser.parse_args()
     if args.command == "acquire":
         try:
@@ -313,7 +326,8 @@ def main():
             print(json.dumps({"status": "blocked", "reason": str(error)}))
             return 2
     report = offline(args.shipment, list(LOCK["clients"]) if args.client == "all" else [args.client],
-                     WORKFLOWS if args.workflow == "all" else [args.workflow])
+                     WORKFLOWS if args.workflow == "all" else [args.workflow],
+                     args.docker_path, args.docker_socket)
     print(json.dumps(report, indent=2, sort_keys=True))
     return {"passed": 0, "failed": 1, "blocked": 2}[report["status"]]
 

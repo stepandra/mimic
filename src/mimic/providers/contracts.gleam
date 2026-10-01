@@ -10,6 +10,8 @@ pub type Reason {
   ReauthorizationRequired
   NoAccount
   Quota
+  /// A proven request-scoped limit; no credential penalty or automatic replay.
+  RequestLimited
   Unavailable
   InvalidResponse
   Persistence

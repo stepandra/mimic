@@ -259,7 +259,7 @@ fn media_matches(headers: List(Header), expected: BinaryMedia) -> Bool {
     Proto -> "application/proto"
   }
   case values(headers, "content-type") {
-    [value] -> string.lowercase(string.trim(value)) == expected
+    [value] -> string.lowercase(trim_http_ows(value)) == expected
     _ -> False
   }
 }
@@ -352,7 +352,20 @@ fn read_stream_head(
 pub fn stream_next(
   stream: Stream,
 ) -> Result(Option(#(BitArray, Stream)), Failure) {
-  case stream_read(stream, now_ms() + timeout_ms) {
+  stream_next_before(stream, now_ms() + timeout_ms)
+}
+
+/// Pull using one absolute deadline in `mimic_egress_ffi.now_ms()`'s monotonic
+/// millisecond domain. Callers must use that same clock plus their total budget,
+/// not epoch time, and reuse the deadline for every pull in the operation.
+/// An expired deadline fails before any I/O, even with ready buffered bytes or
+/// terminal framing. Each nested framing read checks the same deadline.
+/// Like stream_next, this never closes: the caller owns exactly one cancel.
+pub fn stream_next_before(
+  stream: Stream,
+  absolute_deadline_ms: Int,
+) -> Result(Option(#(BitArray, Stream)), Failure) {
+  case stream_read(stream, absolute_deadline_ms) {
     Ok(value) -> Ok(value)
     Error(_) -> Error(Failure(InvalidResponse, Uncertain, None))
   }
@@ -368,24 +381,25 @@ fn stream_read(
   stream: Stream,
   deadline: Int,
 ) -> Result(Option(#(BitArray, Stream)), String) {
+  use _ <- result.try(stream_timeout(deadline))
   case stream.framing {
     NoBody | Fixed(0) -> Ok(None)
     Fixed(left) -> {
       let size = int.min(left, 16_384)
-      use chunk <- result.try(bytes(stream.socket, size, remaining(deadline)))
+      use chunk <- result.try(stream_bytes(stream.socket, size, deadline))
       Ok(Some(#(chunk, Stream(..stream, framing: Fixed(left - size)))))
     }
     Chunked -> {
       use size <- result.try(case stream.pending {
         0 -> {
-          use raw <- result.try(line(stream.socket, remaining(deadline)))
+          use raw <- result.try(stream_line(stream.socket, deadline))
           parse_chunk_size(raw)
         }
         n -> Ok(n)
       })
       case size {
         0 -> {
-          use trailer <- result.try(line(stream.socket, remaining(deadline)))
+          use trailer <- result.try(stream_line(stream.socket, deadline))
           case trailer {
             "\r\n" -> Ok(None)
             _ -> Error("Chunk trailers unsupported")
@@ -395,17 +409,13 @@ fn stream_read(
           Error("Stream exceeds limit")
         _ -> {
           let count = int.min(size, 16_384)
-          use chunk <- result.try(bytes(
-            stream.socket,
-            count,
-            remaining(deadline),
-          ))
+          use chunk <- result.try(stream_bytes(stream.socket, count, deadline))
           use _ <- result.try(case count == size {
             True -> {
-              use separator <- result.try(bytes(
+              use separator <- result.try(stream_bytes(
                 stream.socket,
                 2,
-                remaining(deadline),
+                deadline,
               ))
               case separator {
                 <<13, 10>> -> Ok(Nil)
@@ -428,6 +438,28 @@ fn stream_read(
       }
     }
   }
+}
+
+fn stream_timeout(deadline: Int) -> Result(Int, String) {
+  let left = deadline - now_ms()
+  case left > 0 {
+    True -> Ok(left)
+    False -> Error("Stream deadline expired")
+  }
+}
+
+fn stream_line(socket: Socket, deadline: Int) -> Result(String, String) {
+  use timeout <- result.try(stream_timeout(deadline))
+  line(socket, timeout)
+}
+
+fn stream_bytes(
+  socket: Socket,
+  count: Int,
+  deadline: Int,
+) -> Result(BitArray, String) {
+  use timeout <- result.try(stream_timeout(deadline))
+  bytes(socket, count, timeout)
 }
 
 fn ask(
@@ -705,15 +737,42 @@ fn parse_header(raw: String) -> Result(Header, String) {
     Ok(#(line, "")) ->
       case string.split_once(line, ":") {
         Ok(#(name, value)) if name != "" -> {
-          let value = string.trim(value)
+          // Validate raw octets before any normalization. Unicode trim would
+          // erase VT and non-HTTP whitespace/format bytes into valid tokens.
           case safe_header(name) && safe_value(value) {
-            True -> Ok(Header(name, value))
+            True -> Ok(Header(name, trim_http_ows(value)))
             False -> Error("invalid response header")
           }
         }
         _ -> Error("invalid response header framing")
       }
     _ -> Error("invalid response header framing")
+  }
+}
+
+fn trim_http_ows(value: String) -> String {
+  let bytes = drop_http_ows(bit_array.from_string(value))
+  let end = field_end(bytes, 0, 0)
+  // Only ASCII SP/HTAB octets are removed, so valid UTF-8 cannot be split.
+  let assert Ok(bytes) = bit_array.slice(bytes, 0, end)
+  let assert Ok(value) = bit_array.to_string(bytes)
+  value
+}
+
+fn drop_http_ows(bytes: BitArray) -> BitArray {
+  case bytes {
+    <<byte, rest:bytes>> if byte == 32 || byte == 9 -> drop_http_ows(rest)
+    _ -> bytes
+  }
+}
+
+fn field_end(bytes: BitArray, offset: Int, end: Int) -> Int {
+  case bytes {
+    <<>> -> end
+    <<byte, rest:bytes>> if byte == 32 || byte == 9 ->
+      field_end(rest, offset + 1, end)
+    <<_, rest:bytes>> -> field_end(rest, offset + 1, offset + 1)
+    _ -> panic as "HTTP field octets must be byte aligned"
   }
 }
 
@@ -784,7 +843,7 @@ fn response_framing(
         False ->
           case content_encodings, lengths, encodings {
             [], [], [encoding] ->
-              case string.lowercase(string.trim(encoding)) {
+              case string.lowercase(trim_http_ows(encoding)) {
                 "chunked" -> Ok(Chunked)
                 _ -> Error("unsupported transfer encoding")
               }
@@ -824,23 +883,38 @@ fn supported_media(
         raw
         |> string.lowercase
         |> string.split(on: ";")
-        |> list.map(string.trim)
+        |> list.map(trim_http_ows)
       let media = list.first(parts) |> result.unwrap("")
       let parameters = list.drop(parts, 1)
       case
-        {
-          media == "application/json"
-          || media == "text/event-stream"
-          || string.starts_with(media, "application/")
-          && string.ends_with(media, "+json")
+        ascii_media_field(bit_array.from_string(raw))
+        && case string.split(media, "/") {
+          ["application", "json"] | ["text", "event-stream"] -> True
+          ["application", subtype] ->
+            string.byte_size(subtype) > 5
+            && string.ends_with(subtype, "+json")
+            && safe_header(subtype)
+          _ -> False
         }
-        && list.all(parameters, fn(p) { p == "charset=utf-8" })
+        && case parameters {
+          [] | ["charset=utf-8"] -> True
+          _ -> False
+        }
       {
         True -> Ok(Nil)
         False -> Error("only UTF-8 JSON or SSE response media supported")
       }
     }
     _, _ -> Error("ambiguous response Content-Type")
+  }
+}
+
+fn ascii_media_field(bytes: BitArray) -> Bool {
+  case bytes {
+    <<>> -> True
+    <<byte, rest:bytes>> if byte == 9 || { byte >= 32 && byte <= 126 } ->
+      ascii_media_field(rest)
+    _ -> False
   }
 }
 
@@ -859,7 +933,7 @@ fn has_close(headers: List(Header)) -> Bool {
   values(headers, "connection")
   |> list.any(fn(value) {
     string.split(string.lowercase(value), ",")
-    |> list.any(fn(token) { string.trim(token) == "close" })
+    |> list.any(fn(token) { trim_http_ows(token) == "close" })
   })
 }
 

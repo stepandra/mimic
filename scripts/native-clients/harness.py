@@ -9,6 +9,7 @@ from pathlib import Path
 import resource
 import signal
 import socket
+import stat
 import subprocess
 import tempfile
 import time
@@ -20,6 +21,15 @@ BASE_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/work/home",
             "TMPDIR": "/tmp", "LANG": "C.UTF-8", "TERM": "dumb",
             "LD_LIBRARY_PATH": "/usr/local/lib", "ERL_FLAGS": "+S 2:2 +A 2"}
 GATEWAY = ["/bin/sh", "/shipment/entrypoint.sh", "run"]
+FIXTURE_PORT = 39011
+GATEWAY_PORT = 39012
+
+
+class ContainedFixture(Fixture):
+    """Reuse the fixture unchanged; select its socket before HTTPServer binds."""
+    def server_bind(self):
+        self.server_address = ("127.0.0.1", FIXTURE_PORT)
+        super().server_bind()
 
 
 def limits():
@@ -111,12 +121,24 @@ def containment():
     root = next(line.split() for line in mounts if line.split()[1] == "/")
     if "ro" not in root[3].split(","):
         raise RuntimeError("readonly_root_required")
+    # This root-owned immutable file lives in a sticky tmpfs directory. An
+    # unprivileged target cannot replace it or use a marker as a host fallback.
+    marker = Path("/tmp/mimic-f02-owner")
+    try:
+        info = marker.lstat()
+        expected = (f"mimic.containment/v1 bind={FIXTURE_PORT},{GATEWAY_PORT} "
+                    f"connect={FIXTURE_PORT},{GATEWAY_PORT}\n")
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) != 0o444
+                or marker.read_text() != expected):
+            raise RuntimeError("f02_namespace_owner_required")
+    except OSError as error:
+        raise RuntimeError("f02_namespace_owner_required") from error
 
 
 def port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    # A new container namespace owns this fixed port; no host port is published.
+    return GATEWAY_PORT
 
 
 def private(path, value):
@@ -216,7 +238,7 @@ def workflow(client, name, request_id, binding):
     for path in ["home/.claude", "home/.codex", "project", "state"]:
         (work / path).mkdir(parents=True, exist_ok=True)
     private(work / "project/canary.txt", CANARY)
-    with Fixture(client, name) as fixture:
+    with ContainedFixture(client, name) as fixture:
         try:
             gateway_port = port()
             config = settings(client, fixture, gateway_port, work)
@@ -278,12 +300,15 @@ def main():
     parser.add_argument("--client", choices=["claude", "codex"], required=True)
     parser.add_argument("--workflow", choices=["sse", "tool", "continuation", "cancel"], required=True)
     parser.add_argument("--request-id", required=True)
+    parser.add_argument("--shipment-sha256", required=True)
     args = parser.parse_args()
     try:
         pin = json.loads(Path("/qa/clients.lock.json").read_text())["clients"][args.client]
         binding = contract.provenance(
             pin, contract.source_hashes(Path("/qa")), contract.shipment_hash(Path("/shipment")),
             contract.digest(contract.EXECUTABLES[args.client]))
+        if binding["shipment_sha256"] != args.shipment_sha256:
+            raise ValueError("embedded_shipment_binding_mismatch")
     except (OSError, ValueError, KeyError):
         # No native child was launched. The parent cannot validate missing provenance
         # and will record an invalid report, never a native workflow pass.
@@ -295,7 +320,11 @@ def main():
         containment()
     except RuntimeError as error:
         result = contract.empty_report(args.client, args.workflow, args.request_id, binding)
-        result.update(status="blocked", reason=str(error))
+        # Preserve the existing report validator ABI; the precise F02 reason is
+        # an outer execution-boundary concern, not a new workflow capability.
+        reason = ("container_required" if str(error) == "f02_namespace_owner_required"
+                  else str(error))
+        result.update(status="blocked", reason=reason)
         print(json.dumps(result, sort_keys=True))
         return 2
     result = workflow(args.client, args.workflow, args.request_id, binding)

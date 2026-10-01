@@ -20,7 +20,7 @@ import glisten
 import glisten/transport
 import gramps/websocket.{BinaryFrame, Data, TextFrame} as gramps_websocket
 import logging
-import mist/internal/buffer.{type Buffer, Buffer}
+import mist/internal/chunked
 import mist/internal/encoder
 import mist/internal/file
 import mist/internal/handler
@@ -214,27 +214,22 @@ pub type ReadError {
   MalformedBody
 }
 
-/// The request body is not pulled from the socket until requested. The
-/// `content-length` header is used to determine whether the socket is read
-/// from or not. The read may also fail, and a `ReadError` is raised.
+/// Read only this request's framed body, not a following keepalive request.
+/// Fixed lengths are checked before socket reads; chunked bodies are checked
+/// cumulatively before reading each chunk's data. Both obey max_body_limit.
+/// Body reads are lazy and may fail with a ReadError.
 pub fn read_body(
   req: Request(Connection),
   max_body_limit max_body_limit: Int,
 ) -> Result(Request(BitArray), ReadError) {
-  req
-  |> request.get_header("content-length")
-  |> result.try(int.parse)
-  |> result.unwrap(0)
-  |> fn(content_length) {
-    case content_length {
-      value if value <= max_body_limit -> {
-        http.read_body(req)
-        |> result.replace_error(MalformedBody)
-      }
-      _ -> {
-        Error(ExcessBody)
-      }
-    }
+  http.read_body(req, max_body_limit)
+  |> result.map_error(read_error)
+}
+
+fn read_error(error: http.DecodeError) -> ReadError {
+  case error {
+    http.BodyTooLarge -> ExcessBody
+    _ -> MalformedBody
   }
 }
 
@@ -246,114 +241,17 @@ pub type Chunk {
   Done
 }
 
-fn do_stream(
+fn stream_chunks(
   req: Request(Connection),
-  buffer: Buffer,
+  reader: http.BodyReader,
 ) -> fn(Int) -> Result(Chunk, ReadError) {
   fn(size) {
-    let socket = req.body.socket
-    let transport = req.body.transport
-    let byte_size = bit_array.byte_size(buffer.data)
-
-    case buffer.remaining, byte_size {
-      0, 0 -> Ok(Done)
-
-      0, _buffer_size -> {
-        let #(data, rest) = buffer.slice(buffer, size)
-        Ok(Chunk(data, do_stream(req, buffer.new(rest))))
-      }
-
-      _, buffer_size if buffer_size >= size -> {
-        let #(data, rest) = buffer.slice(buffer, size)
-        let new_buffer = Buffer(..buffer, data: rest)
-        Ok(Chunk(data, do_stream(req, new_buffer)))
-      }
-
-      _, _buffer_size -> {
-        http.read_data(socket, transport, buffer.empty(), http.InvalidBody)
-        |> result.replace_error(MalformedBody)
-        |> result.map(fn(data) {
-          let fetched_data = bit_array.byte_size(data)
-          let new_buffer =
-            Buffer(
-              data: bit_array.append(buffer.data, data),
-              remaining: int.max(0, buffer.remaining - fetched_data),
-            )
-          let #(new_data, rest) = buffer.slice(new_buffer, size)
-          Chunk(new_data, do_stream(req, Buffer(..new_buffer, data: rest)))
-        })
-      }
-    }
-  }
-}
-
-type ChunkState {
-  ChunkState(data_buffer: Buffer, chunk_buffer: Buffer, done: Bool)
-}
-
-fn do_stream_chunked(
-  req: Request(Connection),
-  state: ChunkState,
-) -> fn(Int) -> Result(Chunk, ReadError) {
-  let socket = req.body.socket
-  let transport = req.body.transport
-
-  fn(size) {
-    case fetch_chunks_until(socket, transport, state, size) {
-      Ok(#(data, ChunkState(done: True, ..))) -> {
-        Ok(Chunk(data, fn(_size) { Ok(Done) }))
-      }
-      Ok(#(data, state)) -> {
-        Ok(Chunk(data, do_stream_chunked(req, state)))
-      }
-      Error(_) -> Error(MalformedBody)
-    }
-  }
-}
-
-fn fetch_chunks_until(
-  socket: glisten.Socket,
-  transport: transport.Transport,
-  state: ChunkState,
-  byte_size: Int,
-) -> Result(#(BitArray, ChunkState), ReadError) {
-  let data_size = bit_array.byte_size(state.data_buffer.data)
-  case state.done, data_size {
-    _, size if size >= byte_size -> {
-      let #(value, rest) = buffer.slice(state.data_buffer, byte_size)
-      Ok(#(value, ChunkState(..state, data_buffer: buffer.new(rest))))
-    }
-
-    True, _ -> {
-      Ok(#(state.data_buffer.data, ChunkState(..state, done: True)))
-    }
-
-    False, _ -> {
-      case http.parse_chunk(state.chunk_buffer.data) {
-        http.Complete -> {
-          let updated_state =
-            ChunkState(..state, chunk_buffer: buffer.empty(), done: True)
-          fetch_chunks_until(socket, transport, updated_state, byte_size)
-        }
-        http.Chunk(<<>>, next_buffer) -> {
-          http.read_data(socket, transport, next_buffer, http.InvalidBody)
-          |> result.replace_error(MalformedBody)
-          |> result.try(fn(new_data) {
-            let updated_state =
-              ChunkState(..state, chunk_buffer: buffer.new(new_data))
-            fetch_chunks_until(socket, transport, updated_state, byte_size)
-          })
-        }
-        http.Chunk(data, next_buffer) -> {
-          let updated_state =
-            ChunkState(
-              ..state,
-              data_buffer: buffer.append(state.data_buffer, data),
-              chunk_buffer: next_buffer,
-            )
-          fetch_chunks_until(socket, transport, updated_state, byte_size)
-        }
-      }
+    use step <- result.try(
+      http.read_body_chunk(req, reader, size) |> result.map_error(read_error),
+    )
+    case step {
+      http.BodyDone -> Ok(Done)
+      http.BodyChunk(data, next) -> Ok(Chunk(data, stream_chunks(req, next)))
     }
   }
 }
@@ -363,43 +261,19 @@ fn fetch_chunks_until(
 /// body. Any errors reading the body will propagate out, or `Chunk`s will be
 /// emitted. This provides a `consume` method to attempt to grab the next
 /// `size` chunk from the socket.
+/// Chunked streams have a 64 MiB safety ceiling and bounded metadata. Readers
+/// have a 15-second total socket-read deadline. Consume through Done to reuse
+/// keepalive; otherwise Mist closes rather than draining an unchecked body.
 pub fn stream(
   req: Request(Connection),
 ) -> Result(fn(Int) -> Result(Chunk, ReadError), ReadError) {
-  let continue =
-    req
-    |> http.handle_continue
-    |> result.replace_error(MalformedBody)
-
-  use _nil <- result.map(continue)
-
-  let is_chunked = case request.get_header(req, "transfer-encoding") {
-    Ok("chunked") -> True
-    _ -> False
+  let limit = case request.get_header(req, "transfer-encoding") {
+    Ok("chunked") -> 67_108_864
+    _ -> 9_223_372_036_854_775_807
   }
-
-  let assert http.Initial(data) = req.body.body
-
-  case is_chunked {
-    True -> {
-      let state = ChunkState(buffer.new(<<>>), buffer.new(data), False)
-      do_stream_chunked(req, state)
-    }
-    False -> {
-      let content_length =
-        req
-        |> request.get_header("content-length")
-        |> result.try(int.parse)
-        |> result.unwrap(0)
-
-      let initial_size = bit_array.byte_size(data)
-
-      let buffer =
-        Buffer(data: data, remaining: int.max(0, content_length - initial_size))
-
-      do_stream(req, buffer)
-    }
-  }
+  http.body_reader(req, limit)
+  |> result.map_error(read_error)
+  |> result.map(stream_chunks(req, _))
 }
 
 type TlsOptions {
@@ -647,6 +521,7 @@ pub fn websocket(
   let transport = request.body.transport
   case http.upgrade(socket, transport, extensions, request) {
     Ok(_nil) -> {
+      let ready = process.new_subject()
       let start = fn() {
         websocket.initialize_connection(
           on_init,
@@ -655,6 +530,7 @@ pub fn websocket(
           socket,
           transport,
           extensions,
+          ready,
         )
       }
 
@@ -663,6 +539,11 @@ pub fn websocket(
         Ok(started) -> {
           let assert Ok(_) =
             transport.controlling_process(transport, socket, started.data)
+          let assert Ok(subject) = process.receive(ready, 500)
+          case request.body.body {
+            http.Initial(data) -> websocket.receive_initial(subject, data)
+            _ -> Nil
+          }
           websocket.set_active(transport, socket)
           response.new(200) |> response.set_body(Websocket)
         }
@@ -895,39 +776,60 @@ pub type ChunkNext(state) {
   ChunkAbort(reason: String)
 }
 
+/// A connection-terminal HTTP/1.1 chunked response. Read the request body before
+/// calling this function; unread-body handoffs are rejected without draining.
+///
+/// Init and every loop callback run on one persistent executor, so runtime
+/// adoption remains valid. Init's subject is a send-only application capability
+/// owned by the socket coordinator, not a locally receivable executor subject.
+/// There is one callback in flight and at most 32 pending application messages.
+///
+/// The coordinator observes actual transport termination even while a callback
+/// blocks. TCP write-half-close is unsupported on this streaming path: default
+/// active TCP FIN/SHUT_WR termination aborts the response, never inventing EOF.
 pub fn chunked(
   request req: Request(Connection),
   response response: Response(discard),
   init init: fn(Subject(message)) -> state,
   loop loop: fn(state, message, Connection) -> ChunkNext(state),
 ) -> Response(ResponseData) {
+  case http.request_body_completed(req.body) {
+    False ->
+      response.new(400)
+      |> http.connection_close
+      |> response.set_body(Bytes(bytes_tree.new()))
+    True -> start_chunked(req, response, init, loop)
+  }
+}
+
+fn start_chunked(
+  req: Request(Connection),
+  response: Response(discard),
+  init: fn(Subject(message)) -> state,
+  loop: fn(state, message, Connection) -> ChunkNext(state),
+) -> Response(ResponseData) {
+  let ready = process.new_subject()
+  let request_owner = process.self()
   let start = fn() {
-    actor.new_with_initialiser(1000, fn(subj) {
-      init(subj)
-      |> actor.initialised
-      |> actor.returning(process.self())
-      |> actor.selecting(process.new_selector() |> process.select(subj))
-      |> Ok
-    })
-    |> actor.on_message(fn(state, message) {
-      case loop(state, message, req.body) {
-        ChunkContinue(state) -> actor.continue(state)
-        ChunkStop -> {
-          let _ = case send_chunk(req.body, <<>>) {
-            Ok(_nil) -> Nil
-            Error(_reason) -> {
-              logging.log(logging.Debug, "Failed to send final chunk")
-            }
-          }
-          actor.stop()
+    chunked.start(
+      req.body,
+      request_owner,
+      init,
+      fn(state, message) {
+        case loop(state, message, req.body) {
+          ChunkContinue(state) -> next.Continue(state, None)
+          ChunkStop -> next.NormalStop
+          ChunkAbort(reason) -> next.AbnormalStop(reason)
         }
-        ChunkAbort(reason) -> actor.stop_abnormal(reason)
-      }
-    })
-    |> actor.start
-    |> result.map(fn(started) { actor.Started(started.data, started.data) })
+      },
+      fn() { send_chunk(req.body, <<>>) },
+      ready,
+    )
   }
 
+  // This path has always stopped the HTTP connection loop after handoff.
+  // Declare that terminal policy rather than implying pipelined socket reuse.
+  let response = http.connection_close(response)
   let headers = [#("transfer-encoding", "chunked"), ..response.headers]
   let initial_payload =
     encoder.response_builder(
@@ -936,26 +838,43 @@ pub fn chunked(
       http.version_to_string(http.Http11),
     )
 
-  let assert Ok(_nil) =
-    transport.send(req.body.transport, req.body.socket, initial_payload)
-
-  let factory_supervisor = factory.get_by_name(req.body.factory_name)
-
-  case factory.start_child(factory_supervisor, start) {
-    Ok(started) -> {
-      let assert Ok(_controlled) =
-        transport.controlling_process(
-          req.body.transport,
-          req.body.socket,
-          started.data,
-        )
-      response.new(200) |> response.set_body(Chunked)
-    }
-    Error(_start_error) -> {
-      logging.log(logging.Error, "Failed to start chunked response process")
-      response.new(400) |> response.set_body(Bytes(bytes_tree.new()))
+  let handoff = {
+    use _ <- result.try(
+      transport.send(req.body.transport, req.body.socket, initial_payload)
+      |> result.replace_error(Nil),
+    )
+    let factory_supervisor = factory.get_by_name(req.body.factory_name)
+    use started <- result.try(
+      factory.start_child(factory_supervisor, start)
+      |> result.replace_error(Nil),
+    )
+    let controlled =
+      transport.controlling_process(
+        req.body.transport,
+        req.body.socket,
+        started.data,
+      )
+      |> result.replace_error(Nil)
+    case controlled, process.receive(ready, 1000) {
+      Ok(_), Ok(control) -> {
+        process.send(control, chunked.Ready)
+        Ok(Nil)
+      }
+      _, _ -> {
+        process.kill(started.data)
+        Error(Nil)
+      }
     }
   }
+  case handoff {
+    Ok(_) -> Nil
+    Error(_) -> {
+      let _ = transport.close(req.body.transport, req.body.socket)
+      logging.log(logging.Debug, "Chunked response handoff failed")
+    }
+  }
+  // A failed head/handoff is an aborted connection, not a second HTTP response.
+  response.new(response.status) |> response.set_body(Chunked)
 }
 
 pub fn send_chunk(connection: Connection, data: BitArray) -> Result(Nil, Nil) {

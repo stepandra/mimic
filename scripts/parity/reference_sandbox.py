@@ -145,7 +145,7 @@ def probe(boundary, forbidden_file):
 
 
 def start(boundary, command, log):
-    return subprocess.Popen(argv(boundary, command), cwd=boundary.directory,
-                            env=environment(boundary.directory), stdin=subprocess.DEVNULL,
-                            stdout=log, stderr=log, start_new_session=True,
-                            preexec_fn=limits)
+    # Policy/probes above remain source evidence. A process group does not own
+    # setsid/double-fork descendants or survive the launcher's parent SIGKILL.
+    # Never silently fall back to this historical path for CPA qualification.
+    raise RuntimeError("f02_namespace_execution_required; seatbelt_lifetime_unqualified")

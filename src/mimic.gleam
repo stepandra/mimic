@@ -1,5 +1,6 @@
 import argv
 import gleam/io
+import mimic/account_ui
 import mimic/auth
 import mimic/autopilot
 import mimic/check
@@ -13,9 +14,11 @@ import mimic/fleet
 import mimic/gateway
 import mimic/ingress
 import mimic/lab
+import mimic/live
 import mimic/observability
 import mimic/persona
 import mimic/pipeline
+import mimic/providers/devin/status_cli
 import mimic/quota
 import mimic/recorder
 import mimic/replay
@@ -50,12 +53,15 @@ pub fn dispatch(args: List(String)) -> Result(String, String) {
     ["persona", ..args] -> persona.cli(args)
     ["replay", ..args] -> replay.cli(args)
     ["lab", ..args] -> lab.cli(args)
+    ["live", ..args] -> live.cli(args)
     ["check", ..args] -> check.cli(args)
     ["auth", ..args] -> auth.cli(args)
+    ["accounts", "ui", ..args] -> account_ui.cli(args)
     ["fleet", "quotas", ..args] -> quota.cli(args)
     ["fleet", ..args] -> fleet.cli(args)
     ["quota", ..args] -> quota.cli(args)
     ["serve", "providers", ..args] -> gateway.cli(["serve", ..args])
+    ["providers", "status", ..args] -> status_cli.cli(args)
     ["providers", ..args] -> gateway.cli(args)
     ["serve", ..args] -> ingress.cli(args)
     ["drive", ..args] -> drive.cli(args)
@@ -82,13 +88,17 @@ Usage: mimic <command> [arguments]
   persona      Lint, validate, and draft TOML wire profiles
   replay       Materialize a persona and replay to a configured endpoint
   lab          Run the deterministic loopback echo/SSE laboratory
+  live         Budgeted synthetic scenarios; live/native admission remains blocked
   check        Check response acceptance and time-to-first-byte bounds
   auth         Operator-owned OAuth/credential lifecycle
+  accounts ui  Loopback account UI with explicit configuration and private state
+               accounts ui serve <config.json> <private-device-identity> <port>
   fleet        Credential selection, status, and quotas
   quota        Inspect the persisted quota ledger
   serve        Authenticated Anthropic/OpenAI-compatible ingress
   providers    Configure and operate the explicit multi-provider gateway
                serve providers <config.json> starts its loopback listener
+               providers status <config.json> <account> reads configured Devin status
   drive        Run a pinned, sandboxed capture scenario
   watch        Detect package-version changes and queue Workshop events
   workshop     Resumable PB/PO/CO pipelines with fail-closed gates

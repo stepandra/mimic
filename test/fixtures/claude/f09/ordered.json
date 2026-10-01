@@ -1,0 +1,321 @@
+{
+  "evidence": "synthetic/source-derived; not a CPA execution, native capture or live result",
+  "source_pin": "acdace936fa7df2905500c7f5e0a97d683138dea",
+  "cases": [
+    {
+      "id": "advisor-before-final-haiku-fallback-filter",
+      "rule": "request.go:1170-1174,1251-1253; insert advisor before final trailer removal",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","future-a,server-side-fallback-2026-06-01,future-b,advisor-tool-2026-03-01"]],
+      "source": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "future-a,advisor-tool-2026-03-01,future-b"
+    },
+    {
+      "id": "native-protocol-beta-before-body-extras",
+      "rule": "request.go:1194-1202; explicit speed protocol flag before lifted body flags",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","future-header"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"speed\":\"fast\",\"betas\":[\"future-body\"]}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\",\"speed\":\"fast\"}",
+      "beta": "future-header,fast-mode-2026-02-01,future-body"
+    },
+    {
+      "id": "full-model-alias-haiku-lexical-gate",
+      "rule": "request.go:286-287,408-418,1251-1253; full supplied alias, not canonical family suffix",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","effort-2025-11-24,server-side-fallback-2026-06-01,future-a"]],
+      "source": "{\"model\":\"haiku-team/future-model\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"haiku-team/future-model\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "future-a"
+    },
+    {
+      "id": "native-unknown-byte-preservation",
+      "rule": "caller ownership; request extensions are not capability evidence",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": " { \"model\":\"future-synthetic\", \"messages\":[{\"role\":\"user\",\"content\":\"λ\"}], \"future\":{\"keep\":true} } ",
+      "body": " { \"model\":\"future-synthetic\", \"messages\":[{\"role\":\"user\",\"content\":\"λ\"}], \"future\":{\"keep\":true} } ",
+      "beta": ""
+    },
+    {
+      "id": "header-before-body-dedup-api-key",
+      "rule": "request.go applyClaudeHeadersWithNativeProfile; selected auth is not client metadata",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["Anthropic-Beta","claude-code-20250219,future-a,oauth-2025-04-20"],["anthropic-beta","future-a,effort-2025-11-24"],["X-Claude-Code-Agent-Type","synthetic-approved"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"betas\":[\"future-b,future-a\"],\"future\":{\"keep\":true}}",
+      "body": "{\"future\":{\"keep\":true},\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\"}",
+      "beta": "claude-code-20250219,future-a,effort-2025-11-24,future-b"
+    },
+    {
+      "id": "native-active-invalid-sampling",
+      "rule": "request.go normalizeClaudeSamplingForUpstream",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\" Enabled \",\"budget_tokens\":1024,\"future\":true},\"temperature\":0.5,\"top_p\":0.94,\"top_k\":3}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\",\"thinking\":{\"budget_tokens\":1024,\"future\":true,\"type\":\" Enabled \"}}",
+      "beta": ""
+    },
+    {
+      "id": "native-active-valid-sampling",
+      "rule": "request.go normalizeClaudeSamplingForUpstream; budget is explicit, never converted",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"adaptive\"},\"temperature\":1,\"top_p\":0.95,\"top_k\":3}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-5\",\"temperature\":1,\"thinking\":{\"type\":\"adaptive\"},\"top_p\":0.95}",
+      "beta": ""
+    },
+    {
+      "id": "native-inactive-temperature-wins",
+      "rule": "request.go normalizeClaudeSamplingForUpstream",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-3-7-sonnet-20250219\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"temperature\":0.5,\"top_p\":0.9,\"top_k\":3}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-3-7-sonnet-20250219\",\"temperature\":0.5,\"top_k\":3}",
+      "beta": ""
+    },
+    {
+      "id": "forced-any-drops-empty-output",
+      "rule": "request.go disableThinkingIfToolChoiceForced; MIMIC also gates forced effort/display betas",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","effort-2025-11-24,thinking-display-updates-2026-08-18,future-a"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"adaptive\"},\"tool_choice\":{\"type\":\"any\"},\"output_config\":{\"effort\":\"high\"}}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\",\"tool_choice\":{\"type\":\"any\"}}",
+      "beta": "future-a"
+    },
+    {
+      "id": "forced-tool-preserves-output-extensions",
+      "rule": "request.go disableThinkingIfToolChoiceForced",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"adaptive\"},\"tool_choice\":{\"type\":\"tool\",\"name\":\"synthetic\"},\"output_config\":{\"effort\":\"high\",\"future\":7,\"format\":{\"type\":\"json_schema\"}}}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\",\"tool_choice\":{\"name\":\"synthetic\",\"type\":\"tool\"},\"output_config\":{\"format\":{\"type\":\"json_schema\"},\"future\":7}}",
+      "beta": ""
+    },
+    {
+      "id": "translated-active-sampling",
+      "rule": "request.go normalizeClaudeSamplingForUpstream; no registry conversion",
+      "input": "translated", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"auto\",\"future\":true},\"temperature\":1,\"top_p\":0.99,\"top_k\":3}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-5-5\",\"thinking\":{\"future\":true,\"type\":\"auto\"}}",
+      "beta": ""
+    },
+    {
+      "id": "translated-inactive-sampling",
+      "rule": "request.go normalizeClaudeSamplingForUpstream; unknown thinking is preserved",
+      "input": "translated", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"future-mode\"},\"temperature\":1,\"top_p\":0.99,\"top_k\":3}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"future-synthetic\",\"thinking\":{\"type\":\"future-mode\"},\"top_k\":3}",
+      "beta": ""
+    },
+    {
+      "id": "disabled-display-conflict",
+      "rule": "request.go effort/display gates; registry-dependent disabled body pruning is NOT implemented",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","effort-2025-11-24,thinking-display-updates-2026-08-18,redact-thinking-2026-02-12,future-a"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\" Disabled \",\"display\":\"summarized\",\"budget_tokens\":1024},\"output_config\":{\"effort\":\"high\",\"future\":true}}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\" Disabled \",\"display\":\"summarized\",\"budget_tokens\":1024},\"output_config\":{\"effort\":\"high\",\"future\":true}}",
+      "beta": "future-a"
+    },
+    {
+      "id": "empty-display-does-not-redact-conflict",
+      "rule": "request.go claudeThinkingDisplaySet",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","redact-thinking-2026-02-12"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"adaptive\",\"display\":\" \"}}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"adaptive\",\"display\":\" \"}}",
+      "beta": "redact-thinking-2026-02-12"
+    },
+    {
+      "id": "haiku-lexical-effort-fallback-gate",
+      "rule": "request.go isClaudeHaikuModel / applyBetaHeader; no entitlement claim",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","effort-2025-11-24,server-side-fallback-2026-06-01,thinking-display-updates-2026-08-18,future-a"]],
+      "source": "{\"model\":\"vendor/future-haiku-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"vendor/future-haiku-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "thinking-display-updates-2026-08-18,future-a"
+    },
+    {
+      "id": "haiku-explicit-fallback",
+      "rule": "request.go applyBetaHeader; preserve caller fallback without generating one",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","server-side-fallback-2026-06-01,future-a"]],
+      "source": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"fallbacks\":[]}",
+      "body": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"fallbacks\":[]}",
+      "beta": "server-side-fallback-2026-06-01,future-a"
+    },
+    {
+      "id": "advisor-order-and-fast",
+      "rule": "request.go claudeBodyHasAdvisorTool / withClaudeAdvisorToolBeta / preserveCallerFingerprint",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","future-a,afk-mode-2026-01-31,future-b"]],
+      "source": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"tools\":[{\"type\":\" Advisor_synthetic \",\"future\":true}],\"speed\":\" FAST \"}",
+      "body": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"tools\":[{\"type\":\" Advisor_synthetic \",\"future\":true}],\"speed\":\" FAST \"}",
+      "beta": "future-a,advisor-tool-2026-03-01,afk-mode-2026-01-31,future-b,fast-mode-2026-02-01"
+    },
+    {
+      "id": "trusted-helper-explicit-trailers",
+      "rule": "MIMIC trusted Helper; not CPA detector; title helper fallback beta remains caller-owned",
+      "input": "native", "turn": "helper", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","effort-2025-11-24,thinking-display-updates-2026-08-18,extended-cache-ttl-2025-04-11,server-side-fallback-2026-06-01,future-a"]],
+      "source": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "server-side-fallback-2026-06-01,future-a"
+    },
+    {
+      "id": "trusted-subagent-without-one-hour",
+      "rule": "request.go applyBetaHeader; turn is selected by operator, not copied agent header",
+      "input": "native", "turn": "subagent", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [["anthropic-beta","extended-cache-ttl-2025-04-11,effort-2025-11-24,future-a"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "effort-2025-11-24,future-a"
+    },
+    {
+      "id": "subagent-explicit-one-hour-with-extensions",
+      "rule": "cloaking.go forEachClaudeCacheControlBlock; request.go applyBetaHeader; explicit TTL preserved",
+      "input": "native", "turn": "subagent", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"system\":[{\"type\":\"text\",\"text\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\",\"scope\":\"global\",\"future\":true}}],\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"system\":[{\"type\":\"text\",\"text\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\",\"scope\":\"global\",\"future\":true}}],\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "extended-cache-ttl-2025-04-11"
+    },
+    {
+      "id": "translated-system-and-rolling-five-minute",
+      "rule": "cloaking.go ensureCacheControl / injectSystemCacheControl / injectMessagesCacheControl",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"system\":\"synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"system\":[{\"type\":\"text\",\"text\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"λ\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}",
+      "beta": ""
+    },
+    {
+      "id": "translated-deferred-tools-and-thinking-tail",
+      "rule": "cloaking.go injectToolsCacheControl / claudeMessageEligibleForRollingCache",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"system\":\" \",\"tools\":[{\"name\":\"synthetic\",\"input_schema\":{\"cache_control\":{\"const\":\"opaque\"}}},{\"name\":\"deferred\",\"defer_loading\":true}],\"messages\":[{\"role\":\"user\",\"content\":\"λ\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"synthetic\",\"signature\":\"synthetic-signature\"}]}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"system\":\" \",\"tools\":[{\"input_schema\":{\"cache_control\":{\"const\":\"opaque\"}},\"name\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"defer_loading\":true,\"name\":\"deferred\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"λ\",\"cache_control\":{\"type\":\"ephemeral\"}}]},{\"content\":[{\"signature\":\"synthetic-signature\",\"thinking\":\"synthetic\",\"type\":\"thinking\"}],\"role\":\"assistant\"}]}",
+      "beta": ""
+    },
+    {
+      "id": "translated-final-system-host",
+      "rule": "cloaking.go injectClaudeFinalSystemCacheControl",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"},{\"role\":\"system\",\"content\":\"synthetic-last\"}]}",
+      "body": "{\"model\":\"future-synthetic\",\"messages\":[{\"content\":\"λ\",\"role\":\"user\"},{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic-last\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}",
+      "beta": ""
+    },
+    {
+      "id": "translated-explicit-layout-suppresses-placement",
+      "rule": "cloaking.go shouldEnsureCacheControl non-cloaked branch; no CPA lossy TTL upgrade",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"tools\":[{\"name\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"system\":\"synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"tools\":[{\"name\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"system\":\"synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": ""
+    },
+    {
+      "id": "approved-oauth-one-hour",
+      "rule": "MIMIC explicit ApprovedOneHour; no scope/overage/query-source inference",
+      "input": "translated", "turn": "conversation", "cache": "1h", "operation": "messages", "auth": "oauth",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"system\":\"synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"system\":[{\"type\":\"text\",\"text\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"λ\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}]}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"synthetic-account\\\",\\\"session_id\\\":\\\"synthetic-session\\\"}\"}}",
+      "beta": "oauth-2025-04-20,extended-cache-ttl-2025-04-11"
+    },
+    {
+      "id": "oauth-insertion-after-leading-code",
+      "rule": "request.go withClaudeCountTokensOAuthBeta / withClaudeOAuthCredentialBetas; no fingerprint synthesis",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "oauth",
+      "headers": [["anthropic-beta","claude-code-20250219,future-a"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\",\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"synthetic-account\\\",\\\"session_id\\\":\\\"synthetic-session\\\"}\"}}",
+      "beta": "claude-code-20250219,oauth-2025-04-20,future-a"
+    },
+    {
+      "id": "native-count-controls-and-pruning",
+      "rule": "tokens.go countTokensUpstream; five-field pruning is an explicit MIMIC real-endpoint contract",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "count", "auth": "api_key",
+      "headers": [["anthropic-beta","extended-cache-ttl-2025-04-11,effort-2025-11-24,future-a"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"thinking\":{\"type\":\"adaptive\"},\"tool_choice\":{\"type\":\"any\"},\"output_config\":{\"effort\":\"high\"},\"temperature\":0.4,\"top_p\":0.2,\"top_k\":3,\"stream\":false,\"max_tokens\":20,\"metadata\":{\"future\":true},\"context_management\":{},\"diagnostics\":{},\"future\":{\"keep\":true}}",
+      "body": "{\"future\":{\"keep\":true},\"messages\":[{\"content\":\"λ\",\"role\":\"user\"}],\"model\":\"claude-opus-4-6\",\"output_config\":{\"effort\":\"high\"},\"temperature\":0.4,\"thinking\":{\"type\":\"adaptive\"},\"tool_choice\":{\"type\":\"any\"},\"top_k\":3,\"top_p\":0.2}",
+      "beta": "extended-cache-ttl-2025-04-11,effort-2025-11-24,future-a,token-counting-2024-11-01"
+    },
+    {
+      "id": "translated-count-small-baseline-and-advisor",
+      "rule": "request.go claudeCountTokensBetasForCredential / withClaudeAdvisorToolBeta; count never places cache",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "count", "auth": "api_key",
+      "headers": [["anthropic-beta","effort-2025-11-24,extended-cache-ttl-2025-04-11,future-a"]],
+      "source": "{\"model\":\"claude-opus-4-6\",\"system\":\"synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"tools\":[{\"type\":\"advisor_synthetic\"}],\"speed\":\"fast\",\"temperature\":0.4,\"top_p\":0.2,\"top_k\":3}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"system\":\"synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"tools\":[{\"type\":\"advisor_synthetic\"}],\"speed\":\"fast\",\"temperature\":0.4,\"top_p\":0.2,\"top_k\":3}",
+      "beta": "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,token-counting-2024-11-01,advisor-tool-2026-03-01,future-a"
+    },
+    {
+      "id": "native-count-oauth-no-cli-or-metadata",
+      "rule": "tokens.go countTokensUpstream; native caller-owned beta list, no inference identity body",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "count", "auth": "oauth",
+      "headers": [],
+      "source": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "beta": "oauth-2025-04-20,token-counting-2024-11-01"
+    },
+    {
+      "id": "native-top-p-only",
+      "rule": "request.go normalizeClaudeSamplingForUpstream inactive without temperature",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"top_p\":1,\"top_k\":3}",
+      "body": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"top_p\":1,\"top_k\":3}",
+      "beta": ""
+    },
+    {
+      "id": "native-count-fast-caller-owned",
+      "rule": "request.go preserveCallerFingerprint; translated small count profile is different",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "count", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"speed\":\" FAST \"}",
+      "body": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}],\"speed\":\" FAST \"}",
+      "beta": "fast-mode-2026-02-01,token-counting-2024-11-01"
+    },
+    {
+      "id": "translated-empty-system-all-tools-deferred",
+      "rule": "cloaking.go cacheable prefix false / deferred tools skipped / rolling message",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"system\":[],\"tools\":[{\"name\":\"deferred\",\"defer_loading\":true}],\"messages\":[{\"role\":\"user\",\"content\":\"λ\"}]}",
+      "body": "{\"model\":\"future-synthetic\",\"system\":[],\"tools\":[{\"defer_loading\":true,\"name\":\"deferred\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"λ\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}",
+      "beta": ""
+    },
+    {
+      "id": "translated-system-array-eligible-assistant",
+      "rule": "cloaking.go last system block / assistant final nonthinking block",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"system\":[{\"type\":\"text\",\"text\":\"first\"},{\"type\":\"text\",\"text\":\"last\"}],\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"λ\"}]}]}",
+      "body": "{\"model\":\"future-synthetic\",\"system\":[{\"text\":\"first\",\"type\":\"text\"},{\"text\":\"last\",\"type\":\"text\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"assistant\",\"content\":[{\"text\":\"λ\",\"type\":\"text\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}",
+      "beta": ""
+    },
+    {
+      "id": "translated-no-eligible-cache-host",
+      "rule": "cloaking.go rolling selector skips empty content and assistant redacted thinking",
+      "input": "translated", "turn": "conversation", "cache": "5m", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"messages\":[{\"role\":\"user\",\"content\":[]},{\"role\":\"assistant\",\"content\":[{\"type\":\"redacted_thinking\",\"data\":\"synthetic\"}]}]}",
+      "body": "{\"model\":\"future-synthetic\",\"messages\":[{\"content\":[],\"role\":\"user\"},{\"content\":[{\"data\":\"synthetic\",\"type\":\"redacted_thinking\"}],\"role\":\"assistant\"}]}",
+      "beta": ""
+    },
+    {
+      "id": "native-four-markers-evaluation-order",
+      "rule": "cloaking.go forEachClaudeCacheControlBlock; MIMIC validates, never repairs",
+      "input": "native", "turn": "conversation", "cache": "preserve", "operation": "messages", "auth": "api_key",
+      "headers": [],
+      "source": "{\"model\":\"future-synthetic\",\"tools\":[{\"name\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"system\":[{\"type\":\"text\",\"text\":\"first\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"last\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"λ\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}",
+      "body": "{\"model\":\"future-synthetic\",\"tools\":[{\"name\":\"synthetic\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"system\":[{\"type\":\"text\",\"text\":\"first\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"last\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"λ\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}",
+      "beta": "extended-cache-ttl-2025-04-11"
+    }
+  ]
+}

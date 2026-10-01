@@ -190,9 +190,10 @@ pub fn local_auth_model_kind_normalization_wire_matrix_test() {
                   ir.string_field(tool_result, "content")
                   |> should.equal(Ok("synthetic-result"))
                   ir.field(body, "temperature")
-                  |> should.equal(case input {
-                    policy.NativeMessages -> Some(ir.Integer(1))
-                    _ -> None
+                  |> should.equal(case operation, input {
+                    request.CountTokens, _ | _, policy.NativeMessages ->
+                      Some(ir.Integer(1))
+                    _, _ -> None
                   })
                   case credential {
                     request.ApiKey(_) -> {

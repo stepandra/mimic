@@ -277,7 +277,8 @@ pub fn advisor_beta_order_and_identity_ambiguity_test() {
   let assert Ok(beta) =
     list.find(capture.headers, fn(h) { h.name == "anthropic-beta" })
   beta.value
-  |> should.equal("future-a,advisor-tool-2026-03-01,effort-2025-11-24,future-b")
+  // Header profile is empty: advisor is positioned before lifted body extras.
+  |> should.equal("advisor-tool-2026-03-01,future-a,effort-2025-11-24,future-b")
   let ambiguous =
     parse(
       "{\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"a\\\",\\\"device_\\\\u0069d\\\":\\\"b\\\"}\"}}",

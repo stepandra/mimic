@@ -4,6 +4,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import mimic/dialect/responses
 import mimic/ir
+import mimic/protocol/responses/sparse
 import mimic/protocol/responses/stream
 
 /// Trusted server-side scope, never populated from frame-supplied credentials.
@@ -29,13 +30,22 @@ type Phase {
 }
 
 pub opaque type Session {
-  Session(scope: Scope, generation: String, phase: Phase)
+  Session(scope: Scope, generation: String, phase: Phase, policy: stream.Policy)
 }
 
 pub fn new(scope: Scope, generation: String) -> Result(Session, String) {
+  new_with_policy(scope, generation, stream.Strict)
+}
+
+pub fn new_with_policy(
+  scope: Scope,
+  generation: String,
+  policy: stream.Policy,
+) -> Result(Session, String) {
+  use _ <- result.try(stream.new_with_policy(policy))
   case generation == "" {
     True -> Error("Responses WS requires a trusted connection generation")
-    False -> Ok(Session(scope, generation, Ready(None)))
+    False -> Ok(Session(scope, generation, Ready(None), policy))
   }
 }
 
@@ -100,7 +110,8 @@ pub fn create(
         False -> Ok(Nil)
       }
   })
-  Ok(#(Session(..session, phase: Active(stream.new(), pending)), request))
+  use state <- result.try(stream.new_with_policy(session.policy))
+  Ok(#(Session(..session, phase: Active(state, pending)), request))
 }
 
 /// Frame payload for an already provider-prepared native request. Removing
@@ -155,27 +166,75 @@ pub fn receive(
   )
   use value <- result.try(ir.parse(message))
   use pair <- result.try(stream.push(active.0, value))
-  use phase <- result.try(case stream.outcome(pair.0) {
-    None -> Ok(Active(pair.0, active.1))
+  use phase <- result.try(next_phase(pair.0, pair.1, active.1))
+  Ok(#(Session(..session, phase: phase), pair.1))
+}
+
+/// Preserve validated JSON event-data bytes. Missing reconstruction/created
+/// proof clears continuation even when transparent wire completion succeeds.
+/// Any Error requires the owner to close the physical socket and drop Session.
+pub fn receive_wire(
+  session: Session,
+  scope: Scope,
+  generation: String,
+  message: String,
+) -> Result(#(Session, stream.WireEvent), String) {
+  use _ <- result.try(check_scope(session, scope, generation))
+  use active <- result.try(case session.phase {
+    Active(state, pending) -> Ok(#(state, pending))
+    _ -> Error("Responses WS upstream event without active response")
+  })
+  use pair <- result.try(stream.push_json(active.0, message))
+  use phase <- result.try(next_phase(
+    pair.0,
+    stream.wire_event(pair.1),
+    active.1,
+  ))
+  Ok(#(Session(..session, phase: phase), pair.1))
+}
+
+fn next_phase(
+  state: stream.Stream,
+  event: stream.Event,
+  pending: List(responses.PendingCall),
+) -> Result(Phase, String) {
+  case stream.outcome(state) {
+    None -> Ok(Active(state, pending))
     Some(stream.Completed) -> {
-      use response <- result.try(stream.terminal_response(pair.1))
-      use calls <- result.try(responses.output_calls(response))
-      use _ <- result.try(
-        case
-          list.any(calls, fn(call) {
-            list.any(active.1, fn(prior) { prior.id == call.id })
-          })
-        {
-          True ->
-            Error("Responses WS completed output reuses a pending call id")
-          False -> Ok(Nil)
-        },
-      )
-      Ok(Ready(Some(Receipt(response.id, list.append(active.1, calls)))))
+      // Strict behavior is unchanged. Sparse completion is not automatically
+      // history/cursor evidence, even when the projected terminal has output.
+      case stream.terminal_report(state) {
+        Some(report) ->
+          case sparse.authority(report) {
+            sparse.Ineligible(_) -> Ok(Ready(None))
+            sparse.ContinuationEligible(response) -> receipt(response, pending)
+          }
+        None -> {
+          use response <- result.try(stream.terminal_response(event))
+          receipt(response, pending)
+        }
+      }
     }
     Some(_) -> Ok(Ready(None))
-  })
-  Ok(#(Session(..session, phase: phase), pair.1))
+  }
+}
+
+fn receipt(
+  response: responses.Response,
+  pending: List(responses.PendingCall),
+) -> Result(Phase, String) {
+  use calls <- result.try(responses.output_calls(response))
+  use _ <- result.try(
+    case
+      list.any(calls, fn(call) {
+        list.any(pending, fn(prior) { prior.id == call.id })
+      })
+    {
+      True -> Error("Responses WS completed output reuses a pending call id")
+      False -> Ok(Nil)
+    },
+  )
+  Ok(Ready(Some(Receipt(response.id, list.append(pending, calls)))))
 }
 
 /// No response.cancel wire command exists in the inspected CPA request switch.

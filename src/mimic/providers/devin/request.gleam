@@ -78,8 +78,8 @@ fn encode_thread(
   cascade: String,
   ordinal: Int,
 ) -> Result(BitArray, String) {
-  use token <- result.try(auth.format_session_token(session_token))
   use model <- result.try(models.resolve(configured, request.model))
+  use token <- result.try(auth.format_session_token(session_token))
   use history <- result.try(
     conversation.history(request.turns, fn(index) {
       case index {

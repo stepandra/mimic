@@ -9,7 +9,6 @@ import mimic/protocol/responses/http as pump
 import mimic/protocol/responses/stream
 import mimic/providers/codex/adapter
 import mimic/providers/codex/json_guard
-import mimic/providers/codex/lite
 import mimic/providers/codex/request
 import mimic/providers/codex/response
 import mimic/providers/codex/session
@@ -37,13 +36,9 @@ pub fn open(
   ca_file: Option(String),
   req: contracts.Request,
 ) -> Result(Opened, contracts.Failure) {
+  use req <- result.try(before(adapter.classify_http(req, [])))
   use body <- result.try(before(json_guard.parse(req.body)))
   use decoded <- result.try(before(responses.request_from_value(body)))
-  use marked_lite <- result.try(before(lite.enabled(body)))
-  let req = case req.operation == "responses" && marked_lite {
-    True -> contracts.Request(..req, operation: "responses/lite")
-    False -> req
-  }
   use _ <- result.try(case req.operation {
     "responses/compact" ->
       Error(failure(contracts.Unsupported, contracts.NotSent))
@@ -121,6 +116,58 @@ pub fn cancel(opened: Opened) -> Nil {
 /// transferred by a gateway worker.
 pub fn adopt(opened: Opened) -> Result(Nil, contracts.Failure) {
   runtime.adopt(opened.upstream.stream)
+}
+
+/// The same selected-plan policy is used by the root preflight and the actual
+/// consumer. A discarded strict preflight cannot qualify a sparse stream.
+pub fn http_policy(opened: Opened) -> stream.Policy {
+  response.http_policy(opened.plan)
+}
+
+pub fn consume_http(
+  opened: Opened,
+) -> Result(response.Delivery, contracts.Failure) {
+  use delivery <- result.try(response.consume_http(opened.upstream, opened.plan))
+  publish_delivery(opened, delivery)
+}
+
+/// Unlike the strict compatibility API below, delivers opaque WireEvents and
+/// tolerates source-qualified sparse completion without granting a receipt.
+pub fn forward_http(
+  opened: Opened,
+  emit: fn(stream.WireEvent) -> Result(pump.Control, String),
+) -> Result(response.Delivery, contracts.Failure) {
+  use delivery <- result.try(response.forward_http(
+    opened.upstream,
+    opened.plan,
+    emit,
+  ))
+  publish_delivery(opened, delivery)
+}
+
+fn publish_delivery(
+  opened: Opened,
+  delivery: response.Delivery,
+) -> Result(response.Delivery, contracts.Failure) {
+  case response.delivery_completion(delivery) {
+    None -> Ok(delivery)
+    Some(completed) -> {
+      // Delivery only exists after run_wire_fold returns successfully at EOF.
+      use _ <- result.try(
+        continuation.put(
+          opened.cache,
+          opened.scope,
+          completed.response.id,
+          completed.continuation,
+        )
+        |> result.replace_error(failure(
+          contracts.Persistence,
+          contracts.Started,
+        )),
+      )
+      Ok(delivery)
+    }
+  }
 }
 
 pub fn consume(opened: Opened) -> Result(response.Terminal, contracts.Failure) {
