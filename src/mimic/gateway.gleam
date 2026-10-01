@@ -28,6 +28,7 @@ import mimic/protocol/chat/stream as chat_stream
 import mimic/protocol/responses/http as responses_http
 import mimic/protocol/responses/stream as responses_stream
 import mimic/providers/claude/adapter as claude_adapter
+import mimic/providers/claude/companion as claude_companion
 import mimic/providers/claude/http as claude_http
 import mimic/providers/claude/json_guard as strict_json
 import mimic/providers/claude/login as claude_login
@@ -138,6 +139,17 @@ pub fn cli(args: List(String)) -> Result(String, String) {
               120_000,
               io.println,
               refresh.claude,
+            )
+          Some(config.ClaudeCompanionOAuth(oauth, approved)) ->
+            claude_login.run_with_companion(
+              oauth,
+              store,
+              key,
+              identity,
+              120_000,
+              io.println,
+              approved,
+              claude_login.Transports(refresh.claude, claude_companion.send),
             )
           Some(config.KimiOAuth(oauth)) ->
             enrollment.kimi(oauth, store, key, identity, io.println)

@@ -98,6 +98,17 @@ gateway returns sanitized 503. This also disables genuine quota failover until
 a bounded request-versus-account classifier is qualified. OAuth token-endpoint
 rate-limit deferral is separate and unchanged.
 
+Claude login may explicitly opt into profile/roles reconciliation with an
+`oauth.companion` object containing `profile_url`, `roles_url`, and
+`approved: true`. Both URLs are operator-configured; no endpoint is inferred.
+Absence preserves token-only login. Present-but-invalid or unapproved
+configuration fails closed. This option is Claude OAuth-only, never a
+caller-supplied request flag. Companion failures are advisory only when
+identity can still be established without guessing; conflicting observations
+reject enrollment. Roles do not grant entitlements and are not persisted.
+Refresh remains token-only. Callback enrollment explicitly supports HTTP/1.x;
+HTTP/2 callbacks are rejected without consuming the pending login.
+
 Private credential files use 0600 and state directories use 0700. This is
 permission-protected storage, not encryption at rest. Source and shipment
 workflows are synthetic; no live login/provider compatibility is established.

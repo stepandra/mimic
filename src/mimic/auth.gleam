@@ -14,6 +14,7 @@ import gleam/uri
 import mimic/auth/crypto
 import mimic/auth/storage.{type Store}
 import mist
+import mist/internal/http as mist_http
 
 pub type Config {
   Config(
@@ -385,17 +386,34 @@ pub fn await_callback(
             }
           None -> None
         }
-        case req.method == http.Get && req.path == redirect.path, valid {
-          True, Some(value) -> {
-            process.send(callback, value)
+        // Pinned Mist gives this direct handler Initial for HTTP/1.x and
+        // Stream for HTTP/2. Recheck this invariant on a Mist/pipeline change:
+        // the connection-process completion wait below is HTTP/1.x only.
+        case
+          req.body.body,
+          req.method == http.Get && req.path == redirect.path,
+          valid
+        {
+          mist_http.Initial(_), True, Some(value) -> {
+            process.send(callback, #(value, process.self()))
             response.new(200)
+            |> response.set_header("connection", "close")
+            |> response.set_header("cache-control", "no-store")
             |> response.set_body(
               mist.Bytes(bytes_tree.from_string(
                 "Callback received. You may close this window.",
               )),
             )
           }
-          _, _ ->
+          mist_http.Stream(..), _, _ ->
+            response.new(505)
+            |> response.set_header("cache-control", "no-store")
+            |> response.set_body(
+              mist.Bytes(bytes_tree.from_string(
+                "OAuth callback requires HTTP/1.x",
+              )),
+            )
+          _, _, _ ->
             response.new(400)
             |> response.set_body(
               mist.Bytes(bytes_tree.from_string("Invalid OAuth callback")),
@@ -416,7 +434,21 @@ pub fn await_callback(
             Ok(actual_port) if actual_port == port -> {
               announce(login.url)
               case process.receive(callback, remaining_ms(deadline)) {
-                Ok(value) -> Ok(value)
+                Ok(#(value, connection)) -> {
+                  // The handler publishes before Mist writes the response.
+                  // Its explicit Connection: close makes process termination
+                  // the bounded response-attempt boundary, not a sleep.
+                  let monitor = process.monitor(connection)
+                  let finished =
+                    process.new_selector()
+                    |> process.select_specific_monitor(monitor, fn(_) { Nil })
+                    |> process.selector_receive(remaining_ms(deadline))
+                  process.demonitor_process(monitor)
+                  case finished {
+                    Ok(_) -> Ok(value)
+                    Error(_) -> Error("OAuth callback response did not finish")
+                  }
+                }
                 Error(_) -> Error("OAuth callback timed out")
               }
             }

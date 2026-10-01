@@ -30,6 +30,12 @@ fn mode(path: String) -> Int
 @external(erlang, "mimic_auth_test_ffi", "free_port")
 fn free_port() -> Int
 
+@external(erlang, "mimic_auth_test_ffi", "attempt")
+fn attempt(call: fn() -> a) -> Result(a, Nil)
+
+@external(erlang, "mimic_auth_test_ffi", "h2_callback_status")
+fn h2_callback_status(port: Int, path: String) -> Result(Int, Nil)
+
 @external(erlang, "mimic_auth_test_ffi", "make_symlink")
 fn make_symlink(target: String, link: String) -> Nil
 
@@ -184,6 +190,54 @@ pub fn refresh_backoff_test() {
   worker.backoff(100) |> should.equal(300_000)
 }
 
+pub fn first_valid_callback_response_finishes_before_listener_shutdown_test() {
+  list.each([1, 2, 3], fn(_) {
+    let port = free_port()
+    let origin = "http://127.0.0.1:" <> int.to_string(port)
+    let cfg = auth.Config(..config(1), redirect_uri: origin <> "/callback")
+    let assert Ok(login) = auth.begin_login(cfg, "synthetic")
+    let reply = process.new_subject()
+    auth.await_callback(cfg, login, 5000, fn(_) {
+      let _ =
+        process.spawn_unlinked(fn() {
+          let assert Ok(req) =
+            request.to(
+              origin <> "/callback?state=" <> login.state <> "&code=synthetic",
+            )
+          let result = case attempt(fn() { httpc.send(req) }) {
+            Ok(Ok(response)) -> Ok(#(response.status, response.body))
+            _ -> Error(Nil)
+          }
+          process.send(reply, result)
+        })
+      Nil
+    })
+    |> should.equal(Ok(#(login.state, "synthetic")))
+    let assert Ok(result) = process.receive(reply, 5000)
+    result
+    |> should.equal(Ok(#(200, "Callback received. You may close this window.")))
+  })
+}
+
+pub fn http2_callback_is_rejected_without_consuming_login_test() {
+  let port = free_port()
+  let origin = "http://127.0.0.1:" <> int.to_string(port)
+  let cfg = auth.Config(..config(1), redirect_uri: origin <> "/callback")
+  let assert Ok(login) = auth.begin_login(cfg, "synthetic")
+  let status = process.new_subject()
+  auth.await_callback(cfg, login, 500, fn(_) {
+    process.send(
+      status,
+      h2_callback_status(
+        port,
+        "/callback?state=" <> login.state <> "&code=synthetic",
+      ),
+    )
+  })
+  |> should.equal(Error("OAuth callback timed out"))
+  process.receive(status, 1000) |> should.equal(Ok(Ok(505)))
+}
+
 pub fn callback_only_timeout_rejects_duplicates_and_closes_listener_test() {
   let port = free_port()
   let origin = "http://127.0.0.1:" <> int.to_string(port)
@@ -212,6 +266,31 @@ pub fn callback_only_timeout_rejects_duplicates_and_closes_listener_test() {
   process.sleep(20)
   let assert Ok(closed) = request.to(origin <> "/callback")
   httpc.send(closed) |> should.be_error
+}
+
+pub fn http1_callback_still_works_after_http2_denial_test() {
+  let port = free_port()
+  let origin = "http://127.0.0.1:" <> int.to_string(port)
+  let cfg = auth.Config(..config(1), redirect_uri: origin <> "/callback")
+  let assert Ok(login) = auth.begin_login(cfg, "synthetic")
+  let reply = process.new_subject()
+  auth.await_callback(cfg, login, 5000, fn(_) {
+    h2_callback_status(port, "/callback?state=" <> login.state <> "&code=h2")
+    |> should.equal(Ok(505))
+    let _ =
+      process.spawn_unlinked(fn() {
+        let assert Ok(req) =
+          request.to(origin <> "/callback?state=" <> login.state <> "&code=h1")
+        let answer = case attempt(fn() { httpc.send(req) }) {
+          Ok(Ok(response)) -> Ok(response.status)
+          _ -> Error(Nil)
+        }
+        process.send(reply, answer)
+      })
+    Nil
+  })
+  |> should.equal(Ok(#(login.state, "h1")))
+  process.receive(reply, 1000) |> should.equal(Ok(Ok(200)))
 }
 
 pub fn loopback_callback_state_path_and_token_exchange_test() {

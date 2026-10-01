@@ -275,15 +275,17 @@ pub fn devin_experimental_buffered_chat_real_mist_test() {
   let result =
     request(gateway.port(server), "POST", "/v1/chat/completions", key, body)
   string.contains(result, "synthetic reply") |> should.be_true
-  let streaming =
+  // F23 now admits Chat SSE. Keep the no-I/O denial on unsupported Responses;
+  // dedicated F23 socket/root tests cover successful Chat streaming.
+  let unsupported =
     request(
       gateway.port(server),
       "POST",
-      "/v1/chat/completions",
+      "/v1/responses",
       key,
-      "{\"model\":\"devin/swe-1-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"stream\":true}",
+      "{\"model\":\"devin/swe-1-7\",\"input\":\"hello\",\"stream\":true}",
     )
-  string.contains(streaming, "422") |> should.be_true
+  string.contains(unsupported, "422") |> should.be_true
   list.length(observations(upstream_pid)) |> should.equal(1)
   gateway.stop(server) |> should.be_ok
   stop_upstream(upstream_pid)

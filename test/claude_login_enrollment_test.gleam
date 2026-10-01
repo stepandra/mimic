@@ -15,6 +15,7 @@ import mimic/auth
 import mimic/auth/runtime_store
 import mimic/auth/storage
 import mimic/ir
+import mimic/providers/claude/companion
 import mimic/providers/claude/login
 import mimic/providers/claude/oauth
 import mimic/providers/contracts
@@ -42,6 +43,7 @@ pub fn main() {
   successful_first_and_existing_login_test()
   failure_cancels_only_its_ticket_preserving_existing_gate_test()
   failed_begin_never_announces_or_exchanges_test()
+  companion_admin_mutation_and_cancellation_matrix_test()
   io.println("PASS: Claude enrollment snapshot/admin-mutation matrix")
 }
 
@@ -383,6 +385,125 @@ pub fn failed_begin_never_announces_or_exchanges_test() {
     case ticket {
       Some(ticket) -> runtime_store.cancel_enrollment(ticket) |> should.be_ok
       None -> Nil
+    }
+  })
+}
+
+pub fn companion_admin_mutation_and_cancellation_matrix_test() {
+  list.each([False, True], fn(existing) {
+    list.each([True, False], fn(at_profile) {
+      list.each([Replace, SameValue, Delete, InsertDelete], fn(mutation) {
+        let assert Ok(store) = storage.new(directory())
+        let key = "synthetic-companion-race"
+        case existing {
+          True -> runtime_store.save(store, key, old()) |> should.be_ok
+          False -> Nil
+        }
+        let config = configuration()
+        let assert Ok(approved) =
+          companion.approve(
+            "http://127.0.0.1:19444/profile",
+            "http://127.0.0.1:19444/roles",
+            True,
+          )
+        let sent = process.new_subject()
+        let outcome =
+          login.run_with_companion(
+            config,
+            store,
+            key,
+            operator_identity(),
+            5000,
+            fn(url) { callback(config, url) },
+            approved,
+            login.Transports(
+              fn(_) { Ok(oauth.TokenResponse(200, [], success)) },
+              fn(request) {
+                let profile = string.ends_with(request.url, "/profile")
+                process.send(sent, profile)
+                case profile == at_profile {
+                  True -> mutate(store, key, mutation) |> should.be_ok
+                  False -> Nil
+                }
+                Ok(
+                  oauth.TokenResponse(200, [], case profile {
+                    True -> "{\"account\":{\"uuid\":\"synthetic-account\"}}"
+                    False -> "{}"
+                  }),
+                )
+              },
+            ),
+          )
+        let assert Error(error) = outcome
+        string.contains(error, "synthetic") |> should.be_false
+        process.receive(sent, 100) |> should.equal(Ok(True))
+        process.receive(sent, 100) |> should.equal(Ok(False))
+        process.receive(sent, 0) |> should.be_error
+        case mutation, runtime_store.load(store, key) {
+          Replace, Ok(material) ->
+            { material == replacement() } |> should.be_true
+          SameValue, Ok(material) -> { material == old() } |> should.be_true
+          Delete, _ | InsertDelete, _ ->
+            storage.read_runtime_slot(store, key) |> should.equal(Ok(None))
+          _, _ -> panic as "Admin mutation must win companion completion"
+        }
+      })
+    })
+    // Successful transport with conflicting profile is fatal; only this ticket
+    // is cancelled, and an existing v4 gate is preserved.
+    let assert Ok(store) = storage.new(directory())
+    let key = "synthetic-companion-cancel"
+    let previous = case existing {
+      False -> None
+      True -> {
+        runtime_store.save(store, key, old()) |> should.be_ok
+        let assert Ok(before) = runtime_store.load_record(store, key)
+        let assert Ok(gated) =
+          runtime_store.transition(
+            store,
+            key,
+            before,
+            old(),
+            runtime_store.Deferred(9_000_000_000_000),
+          )
+        Some(gated)
+      }
+    }
+    let config = configuration()
+    let assert Ok(approved) =
+      companion.approve(
+        "http://127.0.0.1:19444/profile",
+        "http://127.0.0.1:19444/roles",
+        True,
+      )
+    login.run_with_companion(
+      config,
+      store,
+      key,
+      operator_identity(),
+      5000,
+      fn(url) { callback(config, url) },
+      approved,
+      login.Transports(
+        fn(_) { Ok(oauth.TokenResponse(200, [], success)) },
+        fn(_) {
+          Ok(oauth.TokenResponse(
+            200,
+            [],
+            "{\"account\":{\"uuid\":\"synthetic-conflicting-account\"}}",
+          ))
+        },
+      ),
+    )
+    |> should.equal(Error("Claude OAuth identity mismatch"))
+    case previous {
+      None -> storage.read_runtime_slot(store, key) |> should.equal(Ok(None))
+      Some(previous) -> {
+        let assert Ok(after) = runtime_store.load_record(store, key)
+        { runtime_store.record_material(after) == old() } |> should.be_true
+        runtime_store.record_status(after)
+        |> should.equal(runtime_store.record_status(previous))
+      }
     }
   })
 }

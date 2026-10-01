@@ -9,6 +9,7 @@ import mimic/fleet
 import mimic/gateway/refresh
 import mimic/ir
 import mimic/providers/claude/adapter as claude_adapter
+import mimic/providers/claude/companion as claude_companion
 import mimic/providers/claude/json_guard as strict_json
 import mimic/providers/codex/adapter as codex_adapter
 import mimic/providers/codex/models
@@ -49,6 +50,7 @@ pub type Account {
 pub type OAuthConfig {
   CodexOAuth(codex_oauth.Config)
   ClaudeOAuth(auth.Config)
+  ClaudeCompanionOAuth(auth.Config, claude_companion.Approved)
   KimiOAuth(kimi_oauth.Config)
 }
 
@@ -122,10 +124,15 @@ pub fn decode(source: String) -> Result(Config, String) {
   use _ <- result.try(
     list.try_each(accounts, fn(a) {
       case a.provider, a.auth_mode, catalog {
-        "claude", "api_key", _ -> Ok(Nil)
+        "claude", "api_key", _ ->
+          case a.oauth {
+            Some(ClaudeCompanionOAuth(_, _)) ->
+              Error("Claude companion requires OAuth mode")
+            _ -> Ok(Nil)
+          }
         "claude", "oauth", _ ->
           case a.oauth {
-            Some(ClaudeOAuth(_)) -> Ok(Nil)
+            Some(ClaudeOAuth(_)) | Some(ClaudeCompanionOAuth(_, _)) -> Ok(Nil)
             _ -> Error("Claude OAuth requires explicit endpoints")
           }
         "xai", "api_key", _ ->
@@ -273,6 +280,12 @@ fn decode_oauth(
   provider: String,
   raw: ir.Value,
 ) -> Result(OAuthConfig, String) {
+  use _ <- result.try(
+    case provider == "claude" || ir.field(raw, "companion") == None {
+      True -> Ok(Nil)
+      False -> Error("companion configuration is only supported for Claude")
+    },
+  )
   case provider {
     "kimi" -> {
       use domain <- result.try(ir.string_field(raw, "domain") |> safe)
@@ -311,7 +324,25 @@ fn decode_pkce_oauth(
       use _ <- result.try(
         auth.begin_login(settings, "configuration-check") |> safe,
       )
-      Ok(ClaudeOAuth(settings))
+      case ir.field(raw, "companion") {
+        None -> Ok(ClaudeOAuth(settings))
+        Some(companion) -> {
+          use _ <- result.try(ir.as_object(companion) |> safe)
+          use profile <- result.try(
+            ir.string_field(companion, "profile_url") |> safe,
+          )
+          use roles <- result.try(
+            ir.string_field(companion, "roles_url") |> safe,
+          )
+          use approved <- result.try(
+            ir.required(companion, "approved") |> result.try(ir.as_bool) |> safe,
+          )
+          use approved <- result.try(
+            claude_companion.approve(profile, roles, approved) |> safe,
+          )
+          Ok(ClaudeCompanionOAuth(settings, approved))
+        }
+      }
     }
     _ -> Error("unsupported OAuth provider")
   }
@@ -346,7 +377,9 @@ pub fn runtime_accounts(config: Config) -> List(runtime.Account) {
           credential.Refreshable(
             codex_adapter.refresh(settings, fn(plan) { refresh.send(plan) }),
           )
-        "claude", Some(ClaudeOAuth(settings)) ->
+        "claude", Some(ClaudeOAuth(settings))
+        | "claude", Some(ClaudeCompanionOAuth(settings, _))
+        ->
           credential.Refreshable(claude_adapter.refresher(
             settings,
             refresh.claude,

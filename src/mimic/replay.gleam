@@ -1,3 +1,4 @@
+import gleam/bit_array
 import gleam/int
 import gleam/list
 import gleam/option.{None}
@@ -301,7 +302,10 @@ fn parse_response(raw: String, ttft_ms: Int) -> Result(WireResponse, String) {
         list.try_map(header_lines, fn(line) {
           case string.split_once(line, ":") {
             Ok(#(name, value)) if name != "" ->
-              Ok(Header(name, string.trim_start(value)))
+              case valid_response_header_value(bit_array.from_string(value)) {
+                True -> Ok(Header(name, trim_http_ows_start(value)))
+                False -> Error("Invalid response header value")
+              }
             _ -> Error("Malformed response header")
           }
         }),
@@ -309,6 +313,24 @@ fn parse_response(raw: String, ttft_ms: Int) -> Result(WireResponse, String) {
       Ok(WireResponse(status, headers, body, ttft_ms))
     }
     _ -> Error("Empty response")
+  }
+}
+
+// Unicode whitespace is not HTTP optional whitespace. Never erase malformed
+// media bytes before a provider validates them. Preserve all non-OWS bytes.
+fn trim_http_ows_start(value: String) -> String {
+  case value {
+    " " <> rest | "\t" <> rest -> trim_http_ows_start(rest)
+    _ -> value
+  }
+}
+
+fn valid_response_header_value(value: BitArray) -> Bool {
+  case value {
+    <<>> -> True
+    <<byte, rest:bytes>> if byte == 9 || { byte >= 32 && byte != 127 } ->
+      valid_response_header_value(rest)
+    _ -> False
   }
 }
 

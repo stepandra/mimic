@@ -248,6 +248,53 @@ pub fn token_exchange_requires_refresh_token_test() {
   |> should.equal(Error(oauth.InvalidResponse))
 }
 
+pub fn token_media_encoding_and_private_field_bounds_test() {
+  let body = "{\"access_token\":\"synthetic-new\",\"expires_in\":10}"
+  list.each(
+    [
+      [Header("Content-Type", "text/html")],
+      [Header("Content-Type", "application/json; charset=latin1")],
+      [
+        Header("Content-Type", "application/json"),
+        Header("content-type", "application/json"),
+      ],
+      [Header("Content-Encoding", "gzip")],
+    ],
+    fn(headers) {
+      oauth.parse_tokens(oauth.TokenResponse(200, headers, body), previous(), 0)
+      |> should.equal(Error(oauth.InvalidResponse))
+    },
+  )
+  list.each(["", "synthetic\\nsecret", string.repeat("x", 16_385)], fn(value) {
+    oauth.parse_tokens(
+      oauth.TokenResponse(
+        200,
+        [],
+        "{\"access_token\":\"" <> value <> "\",\"expires_in\":10}",
+      ),
+      previous(),
+      0,
+    )
+    |> should.equal(Error(oauth.InvalidResponse))
+  })
+  oauth.reconcile_identity([
+    oauth.Identity(Some(" synthetic-account "), None),
+    previous().identity,
+  ])
+  |> should.equal(Ok(previous().identity))
+  oauth.reconcile_identity([
+    previous().identity,
+    oauth.Identity(None, Some("synthetic-other-org")),
+  ])
+  |> should.equal(Error(oauth.IdentityChanged))
+  oauth.parse_tokens(
+    oauth.TokenResponse(200, [], body),
+    previous(),
+    9_223_372_036_854_775_807,
+  )
+  |> should.equal(Error(oauth.InvalidResponse))
+}
+
 pub fn ambiguous_token_success_is_rejected_test() {
   list.each(
     [

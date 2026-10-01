@@ -1,10 +1,12 @@
 /// Provider token protocol only. Runtime owns singleflight, storage and retries.
+import gleam/bit_array
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import mimic/auth
+import mimic/auth/runtime_store
 import mimic/ir
 import mimic/providers/claude/json_guard
 import mimic/types.{type Header, Header}
@@ -157,7 +159,7 @@ pub fn parse_tokens(
 ) -> Result(Tokens, Failure) {
   // Every token/error envelope is checked while raw keys still exist, before
   // status can authorize success or a retry-safe rate-limit classification.
-  use body <- result.try(json_guard.parse(response.body) |> invalid_response)
+  use body <- result.try(response_json(response))
   use _ <- result.try(ir.as_object(body) |> invalid_response)
   use _ <- result.try(case response.status {
     200 ->
@@ -192,31 +194,27 @@ pub fn parse_tokens(
         Some(value) if value != "" -> value
         _ -> previous.credential.refresh_token
       }
+      let expires_at_ms = now_ms + expires * 1000
       use _ <- result.try(
         case
-          string.trim(access) != ""
-          && refresh != ""
+          valid_private_string(access)
+          && valid_private_string(refresh)
           && expires > 0
-          && now_ms >= 0
+          && runtime_store.valid_timestamp(now_ms)
+          && runtime_store.valid_timestamp(expires_at_ms)
         {
           True -> Ok(Nil)
           False -> Error(InvalidResponse)
         },
       )
-      use account <- result.try(identity_field(
-        body,
-        "account",
-        previous.identity.account_uuid,
-      ))
-      use organization <- result.try(identity_field(
-        body,
-        "organization",
-        previous.identity.organization_uuid,
-      ))
-      Ok(Tokens(
-        auth.Credential(access, refresh, now_ms + expires * 1000),
-        Identity(account, organization),
-      ))
+      use observed <- result.try(observed_identity(body))
+      use identity <- result.try(
+        reconcile_identity([
+          previous.identity,
+          observed,
+        ]),
+      )
+      Ok(Tokens(auth.Credential(access, refresh, expires_at_ms), identity))
     }
     429 -> Error(RateLimited(retry_after(response.headers)))
     401 | 403 -> Error(InvalidGrant)
@@ -230,23 +228,150 @@ pub fn parse_tokens(
   }
 }
 
-fn identity_field(
-  body: ir.Value,
-  key: String,
-  previous: Option(String),
-) -> Result(Option(String), Failure) {
-  let value = case ir.field(body, key) {
+/// One raw JSON gate for tokens, profiles and opaque roles. Absent media is
+/// allowed, matching the existing transport; supplied media must be JSON/UTF-8.
+/// Compressed or multiply declared response encodings are never decoded here.
+pub fn response_json(response: TokenResponse) -> Result(ir.Value, Failure) {
+  use _ <- result.try(case header_values(response.headers, "content-encoding") {
+    [] -> Ok(Nil)
+    [raw] ->
+      case string.lowercase(string.trim(raw)) {
+        "identity" -> Ok(Nil)
+        _ -> Error(InvalidResponse)
+      }
+    _ -> Error(InvalidResponse)
+  })
+  use _ <- result.try(case header_values(response.headers, "content-type") {
+    [] -> Ok(Nil)
+    [raw] -> {
+      let parts =
+        raw
+        |> string.lowercase
+        |> string.split(";")
+        |> list.map(string.trim)
+      let media = list.first(parts) |> result.unwrap("")
+      case
+        ascii_media_field(bit_array.from_string(raw))
+        && json_media_type(media)
+        && case list.drop(parts, 1) {
+          [] | ["charset=utf-8"] -> True
+          _ -> False
+        }
+      {
+        True -> Ok(Nil)
+        False -> Error(InvalidResponse)
+      }
+    }
+    _ -> Error(InvalidResponse)
+  })
+  json_guard.parse(response.body) |> invalid_response
+}
+
+/// Content-Type is one media type, not a comma-separated header list. Check
+/// token grammar before accepting a structured JSON suffix; suffix matching
+/// alone also admits combined values and invalid subtype separators.
+fn json_media_type(media: String) -> Bool {
+  case string.split(media, "/") {
+    ["application", "json"] -> True
+    ["application", subtype] -> {
+      string.byte_size(subtype) > 5
+      && string.ends_with(subtype, "+json")
+      && list.all(string.to_graphemes(subtype), fn(char) {
+        string.contains(
+          "abcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+-.^_`|~",
+          char,
+        )
+      })
+    }
+    _ -> False
+  }
+}
+
+/// Supported media fields allow ASCII spaces around the type/parameter but
+/// reject controls and non-ASCII whitespace before trimming can hide them.
+fn ascii_media_field(bytes: BitArray) -> Bool {
+  case bytes {
+    <<>> -> True
+    <<byte, rest:bits>> if byte >= 32 && byte < 127 -> ascii_media_field(rest)
+    _ -> False
+  }
+}
+
+fn header_values(headers: List(Header), name: String) -> List(String) {
+  headers
+  |> list.filter(fn(h) { string.lowercase(h.name) == name })
+  |> list.map(fn(h) { h.value })
+}
+
+/// No missing UUID is manufactured. Empty source UUIDs carry no observation.
+pub fn observed_identity(body: ir.Value) -> Result(Identity, Failure) {
+  use account <- result.try(uuid_field(body, "account"))
+  use organization <- result.try(uuid_field(body, "organization"))
+  Ok(Identity(account, organization))
+}
+
+fn uuid_field(body: ir.Value, key: String) -> Result(Option(String), Failure) {
+  use value <- result.try(case ir.field(body, key) {
     None -> Ok(None)
     Some(value) -> {
       use _ <- result.try(ir.as_object(value) |> invalid_response)
       ir.optional_string(value, "uuid") |> invalid_response
     }
+  })
+  normalized_uuid(value)
+}
+
+/// Shared conflict rule for refresh and enrollment. Observations may fill gaps,
+/// but no source (including profile) may replace a different validated identity.
+pub fn reconcile_identity(
+  observations: List(Identity),
+) -> Result(Identity, Failure) {
+  list.try_fold(observations, Identity(None, None), fn(acc, observed) {
+    use account <- result.try(normalized_uuid(observed.account_uuid))
+    use organization <- result.try(normalized_uuid(observed.organization_uuid))
+    use account <- result.try(agree(acc.account_uuid, account))
+    use organization <- result.try(agree(acc.organization_uuid, organization))
+    Ok(Identity(account, organization))
+  })
+}
+
+fn normalized_uuid(value: Option(String)) -> Result(Option(String), Failure) {
+  case value {
+    None -> Ok(None)
+    Some(value) ->
+      case string.trim(value) {
+        "" -> Ok(None)
+        uuid ->
+          case valid_private_string(uuid) {
+            True -> Ok(Some(uuid))
+            False -> Error(InvalidResponse)
+          }
+      }
   }
-  use value <- result.try(value)
-  case previous, value {
-    _, None | _, Some("") -> Ok(previous)
+}
+
+fn agree(left: Option(String), right: Option(String)) {
+  case left, right {
     Some(old), Some(new) if old != new -> Error(IdentityChanged)
-    _, _ -> Ok(value)
+    _, None -> Ok(left)
+    _, _ -> Ok(right)
+  }
+}
+
+/// Private fields are bounded and contain no control octets or outer whitespace.
+/// This validates observations; it is not a UUID/device/token generator.
+pub fn valid_private_string(value: String) -> Bool {
+  value != ""
+  && value == string.trim(value)
+  && string.byte_size(value) <= 16_384
+  && printable(bit_array.from_string(value))
+}
+
+fn printable(bytes: BitArray) -> Bool {
+  case bytes {
+    <<>> -> True
+    <<byte, rest:bits>> if byte >= 32 && byte != 127 -> printable(rest)
+    _ -> False
   }
 }
 
