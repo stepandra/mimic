@@ -287,12 +287,14 @@ fn json_media_type(media: String) -> Bool {
   }
 }
 
-/// Supported media fields allow ASCII spaces around the type/parameter but
-/// reject controls and non-ASCII whitespace before trimming can hide them.
+/// Allow HTTP OWS (SP/HTAB) around the type/parameter; the token grammar above
+/// still rejects whitespace within them. Reject other controls and non-ASCII
+/// whitespace before trimming can hide them.
 fn ascii_media_field(bytes: BitArray) -> Bool {
   case bytes {
     <<>> -> True
-    <<byte, rest:bits>> if byte >= 32 && byte < 127 -> ascii_media_field(rest)
+    <<byte, rest:bits>> if byte == 9 || { byte >= 32 && byte < 127 } ->
+      ascii_media_field(rest)
     _ -> False
   }
 }
