@@ -57,8 +57,8 @@ proceed to independent F23/F27 work without waiting for live permission.
 
 | Slice | Deliverable | Current state |
 | --- | --- | --- |
-| F22 | Source-backed bounded transport; CA/hostname/framing/cancel negatives | Recovered local checkpoint; 24 focused tests and synthetic source CLI passed; coordinator admission/full gate pending; not DONE |
-| F23 | Actual Chat SSE projection from validated native events | Queued; establishes shared Devin client lifecycle |
+| F22 | Source-backed bounded transport; CA/hostname/framing/cancel negatives | Local destination admitted; focused/source/shipment passed; full suite pending; remote qualification not DONE |
+| F23 | Actual Chat SSE projection from validated native events | Compiled provider checkpoint; 19 focused tests passed; root artifact unapplied/CLI unexecuted; review and admission pending |
 | F24 | Messages buffered/SSE preserving supported thinking/tools/media | Queued; depends on F23 lifecycle |
 | F25 | Responses JSON/SSE with correct identities and terminal semantics | Queued; shared Responses API coordination requested |
 | F26 | Permanent-session PKCE/manual enrollment through common OAuthUI | Queued; common shell interface coordination requested |
@@ -151,6 +151,32 @@ Historic timeout cause and forced-EUnit-timeout cleanup remain unverified.
 The parent verified all six imported owned-file hashes and root-patch
 applicability against the attached checkout. `F22_ROOT.patch` is still unapplied;
 it proposes only source/shipment smoke commands, not broader capabilities.
-This is a local checkpoint awaiting coordinator admission, not F22 DONE.
-Root, egress and full-gate grants remain unchanged; remote F22 qualification
-remains blocked.
+The coordinator subsequently admitted the local checkpoint at
+`5dfbbd6bad1160d97f304583e4ccc886ba1119d3`, bookmark `coordinator-f22-local`.
+Destination results reported: 24 focused tests in 16.953 seconds, source CLI
+in 28.811 seconds, shipment CLI in 13.069 seconds. Both CLI runs produced two
+positives, six framing negatives, one SSE denial, four config denials, eight
+primary sends, zero fallback accepts, and confirmed cleanup. The coordinator's
+`docs/devin/F22_ADMISSION.md` records destination logs/hashes; it is not yet
+imported into this umbrella. Its two root smoke additions preserved F15.
+
+Full-suite validation remains pending and remote F22 qualification remains
+blocked. This is local admission, not F22 DONE. F23's future admission must
+explicitly adapt the F22 streaming-422 check to a supported positive or a
+remaining default-off/unsupported-route denial, not silently remove safety
+coverage. F23 root edits remain ungranted pending its compiled contract.
+
+### F23 provider checkpoint
+
+The F23 child completed three provider-owned modules (`client`, `chat`,
+`chat_gateway`), focused tests, a root-patch artifact and a synthetic CLI script.
+The parent verified all eight imported file hashes and patch applicability.
+The direct serialized final child run compiled and passed 19 focused tests in
+3.222 seconds; all ten attempt logs are archived in `F23_CHAT.md`, including
+failures and inadmissible duplicate-wrapper runs.
+
+The facade and generic lifecycle are compiled, not root-admitted. The actual
+root CLI script was syntax checked only; positive destination SSE, shipment
+and full-suite gates remain unexecuted here. Raw trailer metadata/exact status
+fidelity, idle-close monitoring, remote transport and live evidence are not
+claimed. A read-only review is running; a frozen candidate is not approval.
