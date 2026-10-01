@@ -27,6 +27,11 @@ pub fn new() -> State {
   State(stream.new(), <<>>, False, 0, True)
 }
 
+/// Request-bound native model restoration; framing/lifecycle stay unchanged.
+pub fn new_with_model(upstream_model: String, model: String) -> State {
+  State(stream.new_with_model(upstream_model, model), <<>>, False, 0, True)
+}
+
 pub fn feed_partial(state: State, chunk: BitArray) -> Batch {
   case bit_array.bit_size(chunk) % 8 {
     0 -> scan(state, chunk, [])
@@ -134,13 +139,31 @@ pub fn run(
   opened: runtime.Response,
   emit: fn(String) -> Result(lifecycle.Control, String),
 ) -> Result(stream.Status, String) {
+  run_state(opened, new(), emit)
+}
+
+/// Only message_start.message.model is validated/restored by the observer.
+pub fn run_with_model(
+  opened: runtime.Response,
+  upstream_model: String,
+  model: String,
+  emit: fn(String) -> Result(lifecycle.Control, String),
+) -> Result(stream.Status, String) {
+  run_state(opened, new_with_model(upstream_model, model), emit)
+}
+
+fn run_state(
+  opened: runtime.Response,
+  state: State,
+  emit: fn(String) -> Result(lifecycle.Control, String),
+) -> Result(stream.Status, String) {
   // Reuse the common strict HTTP media/encoding gate, not its Responses codec.
   case lifecycle.open_sse(opened.status, opened.headers) {
     Error(_) -> {
       runtime.cancel(opened.stream)
       Error("invalid Claude SSE headers")
     }
-    Ok(_) -> consume(new(), opened.stream, emit)
+    Ok(_) -> consume(state, opened.stream, emit)
   }
 }
 

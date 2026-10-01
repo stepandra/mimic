@@ -100,14 +100,14 @@ pub fn prepare_at(
     "responses", "responses" -> responses_body(request, model)
     "chat", "chat/completions" -> chat_body(request, model)
     "anthropic", "messages" ->
-      case request.mode {
-        contracts.Buffered ->
-          messages.prepare(request.body, request.model, False)
-          |> result.map_error(fn(_) {
-            contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
-          })
-        contracts.Streaming -> unsupported()
-      }
+      messages.prepare(
+        request.body,
+        request.model,
+        request.mode == contracts.Streaming,
+      )
+      |> result.map_error(fn(_) {
+        contracts.Failure(contracts.Unsupported, contracts.NotSent, None)
+      })
     _, _ -> unsupported()
   })
   let base_path = case string.ends_with(base_path, "/v1") {

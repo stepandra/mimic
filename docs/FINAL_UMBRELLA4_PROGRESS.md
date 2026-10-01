@@ -19,8 +19,8 @@
 
 | Slice | Scope | Current state / admission dependency |
 | --- | --- | --- |
-| F14 | Native Kimi Messages SSE | Coordinator confirmed narrow additive hook in Claude adapter/http; exact signature/hunks still require owner review |
-| F15 | Generic Kimi Chat SSE | Library-ready: compiled and 22 focused tests passed; seven-file packet and root patch await coordinator admission and actual source/shipment workflow |
+| F14 | Native Kimi Messages SSE | Library-ready: final format/build and 26 focused tests pass; exact final seam approved by Claude owner; root proposal targets admitted F15 revision, admission pending |
+| F15 | Generic Kimi Chat SSE | Implementation admission DONE at coordinator `8fd0c6fc`; focused/source/shipment/full Gleam 711 pass and independent review approved; complete integration/CI/differential/live remain separate |
 | F16 | Source-qualified native Kimi normalization | Awaiting F01 source freeze; compact remains explicitly denied under old pin |
 | F17 | Grok HTTP continuation | Awaiting F01 qualification and F07 bindings; existing HTTP previous-ID denial remains |
 | F18 | Actual Grok WS/WSS gateway | Provider transport exists; root selected-provider dispatch/default-off policy requires serialized coordinator lane |
@@ -51,7 +51,10 @@ synthetic mocks, executable CPA differential, native workflows, and live
 provider validation remain distinct statuses.
 
 Final handoff must freeze a local JJ revision/bookmark with exact owned-file
-hashes. No final handoff has been frozen yet. Full heavy integration gates must
+hashes. F15 library checkpoint is frozen at
+`85f44ef07144a8a4433933b2f51f1972e4744039`, local bookmark
+`umbrella4-f15-library-v1`, with `docs/kimi/F15_SHA256SUMS` verified 7/7.
+This is not final gateway admission. Full heavy integration gates must
 be coordinated rather than run concurrently by all umbrellas.
 
 Coordinator admission protocol:
@@ -102,3 +105,51 @@ attempt; evidence is the tool transcript only. Its subsequent read-only
 `ps -eo pid,ppid,command | grep '[m]imic_test\|[b]eam.smp'` inspection returned
 no matches, and no process kill was issued. Further verification is restricted
 to focused tests until the coordinator grants a full gate.
+
+## F15 destination admission update
+
+Coordinator imported the exact frozen packet and verified all seven hashes.
+Destination formatting, build and 22 focused tests passed. The first actual
+source CLI smoke failed its malformed-stream closure assertion at script line
+350. Coordinator subsequently reproduced that `HTTPResponse.readline` hides
+`IncompleteRead` for an omitted terminal zero chunk and corrected the harness
+to use `read(1)`, with clean/unclean/timeout controls. A second failed smoke
+required distinguishing JSON-not-SSE 502 from egress-rejected invalid-header
+503 and asserting one upstream send. Both failed runs remain retained.
+
+After these harness-only corrections, coordinator reports actual source CLI
+and shipment smokes passed (18 upstream requests each), with the provider
+packet unchanged. Coordinator added regular integration steps and capability
+documentation, recording results/hashes in its `docs/kimi/F15_ADMISSION.md`.
+The coordinator then fixed a third harness issue identified in independent
+review: source launch now honors `GLEAM` rather than requiring `mise`, with
+launcher controls and rerun source/shipment checks. Independent review found
+no remaining blocker. The full destination Gleam suite passed **711 tests,
+zero failures**, in one 600-second-bounded run; log SHA-256:
+`fe66a98d2defefea03e3c0a0b22804d95f05270b9fc75d33c3aa6fd26480259f`.
+
+F15 implementation admission is **DONE locally** at coordinator revision
+`8fd0c6fcff4f4e7a1a47de33e306e1c84d0ea936`, bookmark
+`coordinator-f15-admitted`. The parent read the destination admission document
+and verified that revision exists without editing the coordinator checkout.
+It has not yet been imported here. The complete integration script, CI,
+publication, CPA differential, native clients and live inference are separate
+and unclaimed. The original provider packet remains unchanged.
+
+## F14 named shared-seam grant
+
+Claude umbrella 3 approved the narrower actual-code seam in
+`src/mimic/providers/claude/stream.gleam` and `http.gleam`, not `adapter.gleam`.
+The grant is additive model check/restoration at the existing parsed observer
+boundary: preserve native `new`/`run` raw frames, lifecycle, usage, valid-prefix
+errors, cleanup and bounds. Re-encode only `message_start` after checking its
+protocol-owned model against the selected upstream model. No second parser,
+recursive rewriting, or broad lifecycle changes. Exact signatures/hunks and
+preservation/mismatch tests must be relayed to the Claude owner before freeze.
+F09 will avoid these files.
+
+The Claude owner inspected and approved the first exact patch/contract hashes,
+with no blocking source issue. This is scoped source review, not runtime/test
+qualification. Before freeze: refresh the patch to final formatted bytes,
+remove stale draft status text, record preservation/mismatch/boundary outcomes,
+and ensure trusted selection supplies nonempty validated model arguments.

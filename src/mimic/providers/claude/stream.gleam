@@ -40,6 +40,7 @@ pub opaque type State {
     status: Status,
     usage: Usage,
     buffered_bytes: Int,
+    model_restoration: Option(#(String, String)),
   )
 }
 
@@ -49,7 +50,14 @@ pub fn new() -> State {
     Awaiting,
     Usage(None, None, None, None),
     0,
+    None,
   )
+}
+
+/// Opt-in request-scoped restoration, not a recursive document transform.
+/// Ordinary Claude callers keep new()/feed() and their original raw frames.
+pub fn new_with_model(upstream_model: String, model: String) -> State {
+  State(..new(), model_restoration: Some(#(upstream_model, model)))
 }
 
 pub fn status(state: State) -> Status {
@@ -114,11 +122,16 @@ fn feed_line(
     False -> state.buffered_bytes + string.byte_size(line)
   }
   let state = State(..state, parser: pair.0, buffered_bytes: buffered)
-  use state <- result.try(list.try_fold(pair.1, state, observe))
-  feed_lines(state, rest, list.append(list.reverse(pair.1), reversed_frames))
+  use observed <- result.try(
+    list.try_fold(pair.1, #(state, reversed_frames), fn(acc, frame) {
+      use next <- result.try(observe(acc.0, frame))
+      Ok(#(next.0, [next.1, ..acc.1]))
+    }),
+  )
+  feed_lines(observed.0, rest, observed.1)
 }
 
-fn observe(state: State, frame: String) -> Result(State, String) {
+fn observe(state: State, frame: String) -> Result(#(State, String), String) {
   let lines = string.split(frame, "\n")
   let names =
     lines
@@ -130,7 +143,7 @@ fn observe(state: State, frame: String) -> Result(State, String) {
     |> list.map(fn(line) { string.drop_start(line, 5) |> string.trim_start })
     |> string.join("\n")
   case data {
-    "" -> Ok(state)
+    "" -> Ok(#(state, frame))
     _ -> {
       use value <- result.try(json_guard.parse_native(data, 1_048_576))
       use kind <- result.try(ir.string_field(value, "type"))
@@ -139,39 +152,99 @@ fn observe(state: State, frame: String) -> Result(State, String) {
         [name] if name == kind -> Ok(Nil)
         _ -> Error("Claude SSE event and payload type disagree")
       })
-      case state.status, kind {
-        Completed, _ | Failed(_), _ ->
-          Error("Claude SSE event after terminal event")
-        _, "error" -> {
-          use error <- result.try(ir.required(value, "error"))
-          use kind <- result.try(ir.string_field(error, "type"))
-          Ok(State(..state, status: Failed(error_kind(kind))))
-        }
-        Awaiting, "message_start" -> {
-          use message <- result.try(ir.required(value, "message"))
-          use usage <- result.try(merge_usage(
-            state.usage,
-            ir.field(message, "usage"),
-          ))
-          Ok(State(..state, status: Receiving, usage: usage))
-        }
-        Receiving, "message_delta" -> {
-          use usage <- result.try(merge_usage(
-            state.usage,
-            ir.field(value, "usage"),
-          ))
-          Ok(State(..state, usage: usage))
-        }
-        Receiving, "message_stop" -> Ok(State(..state, status: Completed))
-        _, "ping" -> Ok(state)
-        _, "message_start"
-        | Awaiting, "message_stop"
-        | Awaiting, "message_delta"
-        -> Error("Invalid Claude SSE message lifecycle")
-        Awaiting, _ -> Error("Claude SSE content before message_start")
-        Receiving, _ -> Ok(state)
+      use next <- result.try(observe_document(state, kind, value))
+      use frame <- result.try(restore_model(state, kind, value, lines, frame))
+      Ok(#(next, frame))
+    }
+  }
+}
+
+fn restore_model(
+  state: State,
+  kind: String,
+  value: ir.Value,
+  lines: List(String),
+  frame: String,
+) -> Result(String, String) {
+  case state.model_restoration, kind {
+    Some(#(upstream_model, model)), "message_start" -> {
+      use message <- result.try(ir.required(value, "message"))
+      use named <- result.try(ir.string_field(message, "model"))
+      use _ <- result.try(case named == upstream_model {
+        True -> Ok(Nil)
+        False -> Error("Native Messages model does not match the request")
+      })
+      use fields <- result.try(ir.as_object(message))
+      let message =
+        ir.Object(
+          list.map(fields, fn(field) {
+            case field.0 {
+              "model" -> #(field.0, ir.String(model))
+              _ -> field
+            }
+          }),
+        )
+      use fields <- result.try(ir.as_object(value))
+      let value =
+        ir.Object(
+          list.map(fields, fn(field) {
+            case field.0 {
+              "message" -> #(field.0, message)
+              _ -> field
+            }
+          }),
+        )
+      // Keep event/id/retry/comments/extensions in their existing order.
+      // Replace only the data lines, using the document already parsed above.
+      let #(reversed, _) =
+        list.fold(lines, #([], False), fn(acc, line) {
+          case string.starts_with(line, "data:"), acc.1 {
+            True, False -> #(["data: " <> ir.stringify(value), ..acc.0], True)
+            True, True -> acc
+            False, _ -> #([line, ..acc.0], acc.1)
+          }
+        })
+      let restored = list.reverse(reversed) |> string.join("\n")
+      case string.byte_size(restored) <= 1_048_576 {
+        True -> Ok(restored)
+        False -> Error("Restored Messages SSE event exceeds limit")
       }
     }
+    _, _ -> Ok(frame)
+  }
+}
+
+fn observe_document(
+  state: State,
+  kind: String,
+  value: ir.Value,
+) -> Result(State, String) {
+  case state.status, kind {
+    Completed, _ | Failed(_), _ ->
+      Error("Claude SSE event after terminal event")
+    _, "error" -> {
+      use error <- result.try(ir.required(value, "error"))
+      use kind <- result.try(ir.string_field(error, "type"))
+      Ok(State(..state, status: Failed(error_kind(kind))))
+    }
+    Awaiting, "message_start" -> {
+      use message <- result.try(ir.required(value, "message"))
+      use usage <- result.try(merge_usage(
+        state.usage,
+        ir.field(message, "usage"),
+      ))
+      Ok(State(..state, status: Receiving, usage: usage))
+    }
+    Receiving, "message_delta" -> {
+      use usage <- result.try(merge_usage(state.usage, ir.field(value, "usage")))
+      Ok(State(..state, usage: usage))
+    }
+    Receiving, "message_stop" -> Ok(State(..state, status: Completed))
+    _, "ping" -> Ok(state)
+    _, "message_start" | Awaiting, "message_stop" | Awaiting, "message_delta" ->
+      Error("Invalid Claude SSE message lifecycle")
+    Awaiting, _ -> Error("Claude SSE content before message_start")
+    Receiving, _ -> Ok(state)
   }
 }
 
