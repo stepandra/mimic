@@ -176,10 +176,11 @@ fn authority(origin: String) -> Result(String, c.Failure) {
     )
       if scheme == "http" || scheme == "https"
     -> {
-      let port = case parsed.port {
-        None -> ""
-        Some(port) -> ":" <> int.to_string(port)
-      }
+      use port <- result.try(case parsed.port {
+        None -> Ok("")
+        Some(port) if port > 0 && port < 65_536 -> Ok(":" <> int.to_string(port))
+        _ -> unsupported()
+      })
       Ok("127.0.0.1" <> port)
     }
     _ -> unsupported()
